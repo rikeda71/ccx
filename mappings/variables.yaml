@@ -1,0 +1,321 @@
+domain: variables
+title: "Variables, Placeholders & Dynamic Injection"
+doc: ../docs/09-variables-and-templating.md
+files:
+  claude:
+    - ".claude/skills/<name>/SKILL.md"
+    - ".claude/commands/<name>.md"
+    - "~/.claude/skills/<name>/SKILL.md"
+  codex:
+    - ".agents/skills/<name>/SKILL.md"
+    - "~/.agents/skills/<name>/SKILL.md"
+    - "（Custom Prompts: deprecated・/prompts:name で呼び出し）"
+format:
+  claude: markdown+yaml-frontmatter
+  codex: markdown+yaml-frontmatter
+entries:
+  - id: variables.arguments-all
+    claude:
+      field: "$ARGUMENTS"
+      type: "string"
+      scope: skill
+    codex:
+      field: "$ARGUMENTS"
+      type: "string"
+      scope: skill
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      記法は両者で同一だが、Codex では Custom Prompts（deprecated）にのみ有効とされており、
+      Skill 本体（SKILL.md）での $ARGUMENTS 展開は公式ドキュメントに記載がなく
+      render.rs/injection.rs に展開ロジックが存在しない（非対応の可能性が高い）。
+      Claude→Codex 変換で Skill に変換する場合は「Skill 本体では $ARGUMENTS が展開されない
+      可能性が高い」と明示警告すること。Codex→Claude は lossless 相当だが Skill→Skill 変換の
+      前提では Codex 側が機能していないため lossy として扱う。
+    source: "https://developers.openai.com/codex/custom-prompts"
+
+  - id: variables.arguments-indexed
+    claude:
+      field: "$ARGUMENTS[N]"
+      type: "string"
+      scope: skill
+    codex:
+      field: "$N+1"
+      type: "string"
+      scope: skill
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "index_shift:+1"
+    warn: true
+    notes: |
+      Claude は 0-indexed（$ARGUMENTS[0] が最初の引数）、Codex（Custom Prompts）は
+      1-indexed（$1 が最初の引数）。Claude→Codex では N+1、Codex→Claude では N-1 に
+      変換する。インデックスずれは最重要の落とし穴。変換レポートに変換前後のインデックスを
+      必ず列挙すること。Codex では Custom Prompts のみ有効・Skill 本体は非対応。
+    source: "https://developers.openai.com/codex/custom-prompts"
+
+  - id: variables.positional-shorthand
+    claude:
+      field: "$N（$0, $1, $2, …; 0-indexed shorthand）"
+      type: "string"
+      scope: skill
+    codex:
+      field: "$N+1（$1, $2, $3, …; 1-indexed）"
+      type: "string"
+      scope: skill
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "index_shift:+1"
+    warn: true
+    notes: |
+      $ARGUMENTS[N] の shorthand。Claude は $0=最初・$1=2番目と 0-indexed。
+      Codex（Custom Prompts）は $1=最初・$2=2番目と 1-indexed。
+      Claude→Codex では $0→$1、$1→$2。Codex→Claude では $1→$0、$2→$1。
+      Codex Skill 本体では非対応（Custom Prompts のみ）。
+    source: "https://developers.openai.com/codex/custom-prompts"
+
+  - id: variables.named
+    claude:
+      field: "$name（frontmatter arguments: 宣言の名前付き引数）"
+      type: "string"
+      scope: skill
+    codex:
+      field: "$UPPERCASE_NAME（KEY=value 呼び出し形式）"
+      type: "string"
+      scope: skill
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "rename"
+    warn: true
+    notes: |
+      Claude の名前付き引数は frontmatter の arguments: フィールドで宣言し、
+      /skill-name foo のような位置渡しで展開される（$name→foo）。
+      Codex（Custom Prompts）は KEY=value 形式（/prompts:name KEY=foo）で渡し、
+      $UPPERCASE_NAME（変数名は大文字）に展開される。
+      変換時は rename（小文字→大文字）に加え呼び出しドキュメントの記法も変更すること。
+      Codex Skill 本体では前処理置換なし。
+    source: "https://developers.openai.com/codex/custom-prompts"
+
+  - id: variables.session-id
+    claude:
+      field: "${CLAUDE_SESSION_ID}"
+      type: "string"
+      scope: session
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に同等のセッション ID 変数が存在しない。変換後にリテラル文字列として残ると
+      誤動作の恐れがある。本文スキャナで検出し行番号とともに変換レポートに列挙して
+      手動対応を促すこと。Agent Skills 標準（agentskills.io）にも含まれない Claude 独自拡張。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.effort-var
+    claude:
+      field: "${CLAUDE_EFFORT}"
+      type: "string"
+      scope: session
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に同等の effort 変数が存在しない。変換後にリテラルとして残ると誤動作。
+      本文スキャナで検出して変換レポートに列挙すること。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.skill-dir
+    claude:
+      field: "${CLAUDE_SKILL_DIR}"
+      type: "string"
+      scope: skill
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に同等の skill ディレクトリ変数が存在しない。パスを参照する処理は
+      手動でハードコードまたは別の方法で代替が必要。変換レポートに列挙すること。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.project-dir
+    claude:
+      field: "${CLAUDE_PROJECT_DIR}"
+      type: "string"
+      scope: project
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に同等のプロジェクトディレクトリ変数が存在しない。
+      Codex では $PWD や $REPO_ROOT を環境変数として参照するスクリプトを
+      別途用意する等の代替が必要。変換レポートに列挙すること。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.plugin-root
+    claude:
+      field: "${CLAUDE_PLUGIN_ROOT}"
+      type: "string"
+      scope: plugin
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に同等の plugin ルート変数が存在しない。plugin 外ではクロードも空文字列を返す。
+      Codex には plugin スコープの skill が存在するが変数としての注入機構はない。
+      変換レポートに列挙すること。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.inline-injection
+    claude:
+      field: "!`cmd`（行頭/空白直後のインライン動的シェル注入）"
+      type: "string"
+      scope: skill
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude 固有の動的シェル注入。skill が Claude に渡される前にシェルを実行し
+      stdout で本文を置換する。Codex は Issue #5019 で "not planned" として実装拒否。
+      変換せず残すとリテラルテキストとして扱われ挙動が無音で壊れる（高リスク）。
+      本文スキャナ正規表現: ^!`[^`]+` および ^[ \t]+!`[^`]+`
+      変換 CLI は検出した行番号・コマンド内容を変換レポートに列挙し手動対応を促すこと。
+      自動削除は情報損失が大きいため行わない。disableSkillShellExecution で無効化も可能。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.block-injection
+    claude:
+      field: "```! ブロック（ブロック動的シェル注入）"
+      type: "string"
+      scope: skill
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude 固有のブロック動的シェル注入。```! で始まる fenced コードブロック全体を
+      コマンドとして実行し stdout でブロックごと置換する。
+      Codex は Issue #5019 で "not planned" として実装拒否。
+      変換せず残すとリテラルとして扱われ誤動作（高リスク）。
+      本文スキャナ正規表現: ^```!$
+      inline-injection と同様に変換 CLI は検出・列挙して手動対応を促すこと。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.dollar-escape
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "$$（リテラル $ のエスケープ）"
+      type: "string"
+      scope: skill
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex Custom Prompts の $$ はリテラル $ として展開されるエスケープシーケンス。
+      Claude 側に同等のエスケープ機構が存在しない。
+      Codex→Claude 変換では $$ を $ に変換するが、Claude 側の変数記法（$name 等）と
+      衝突する恐れがあるため変換レポートに列挙して衝突確認を促すこと。
+    source: "https://developers.openai.com/codex/custom-prompts"
+
+  - id: variables.invocation-slash
+    claude:
+      field: "/skill-name [args]（本文・README 内の呼び出し記法）"
+      type: "string"
+      scope: skill
+    codex:
+      field: "$skill-name（本文・README 内の呼び出し記法）"
+      type: "string"
+      scope: skill
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude の /skill-name ⇄ Codex の $skill-name。本文・README 中の呼び出し記法も変換対象。
+      $ は shell 変数と衝突、/ はパス区切りと衝突するため自動置換は誤検出リスクが高い。
+      変換 CLI は検出して置換提案を出す方式が安全（自動適用ではなくユーザー確認を挟む）。
+      本文スキャナ正規表現: \$[\w-]+（Codex→Claude 検出）
+      なお Codex Skill 本体では $skill-name 記法で渡した引数は展開されない点も併せて警告。
+    source: "https://code.claude.com/docs/en/skills"
+
+  - id: variables.invocation-namespaced
+    claude:
+      field: "/plugin:skill（名前空間付き呼び出し記法）"
+      type: "string"
+      scope: plugin
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude の plugin 名前空間記法 /plugin:skill は Codex に対応機能がない。
+      変換時は plugin 名前空間を除去して $skill 記法へ変換する方法と、
+      dropped として手動対応を要求する方法のどちらかを選択。
+      名前空間除去すると同名 skill が複数ある場合に衝突する恐れがあるため
+      変換レポートに collision の可能性を記載すること。
+      本文スキャナ正規表現: /[\w-]+:[\w-]+
+    source: "https://code.claude.com/docs/en/skills"
+
+notes:
+  - "Codex Skill 本体（SKILL.md）には前処理の変数置換ロジックが存在しない（render.rs/injection.rs に展開コードなし）。$ARGUMENTS を含む全ての変数展開は Custom Prompts（deprecated）にのみ有効であり、Skill→Skill 変換では実質すべての変数記法が non-functional になる。"
+  - "インデックスずれ（0-indexed vs 1-indexed）は機械変換で最も見落とされやすく最も深刻な落とし穴。index_shift:+1 の適用漏れは必ずサイレントな論理バグになる。"
+  - "動的シェル注入（!`cmd` / ```! ブロック）は Codex Issue #5019 で明示的に 'not planned'。変換せず残すとリテラル化して誤動作するため、変換 CLI は detected 時に処理を止めてユーザーに手動対応を要求するレベルで扱うことを推奨。"
+  - "Agent Skills 標準（agentskills.io）に変数・動的注入の仕様は含まれない。これらは両者の独自拡張であり、オープン標準ベースの相互運用性には含まれない。"
+  - "Custom Prompts は deprecated であり OpenAI は Skills への移行を推奨している。変換先として Custom Prompts を経由する方法は過渡的な代替に過ぎない点に注意。"
+  - "Codex 側仕様は流動的（2025-2026 の新機能）。特に Skill 本体での $ARGUMENTS 対応状況は今後変わる可能性がある。source URL とともにバージョン依存性を確認すること。"

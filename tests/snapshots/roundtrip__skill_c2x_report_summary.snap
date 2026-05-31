@@ -1,0 +1,12 @@
+---
+source: tests/roundtrip.rs
+assertion_line: 393
+expression: snapshot
+---
+{
+  "lossless_count": 2,
+  "dropped_count": 3,
+  "body_warnings_count": 3,
+  "lossless_includes_name": true,
+  "lossless_includes_description": true
+}

@@ -1,0 +1,9 @@
+{
+  "plugins": [
+    {
+      "name": "demo-plugin",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

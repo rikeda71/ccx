@@ -1,0 +1,532 @@
+domain: mcp
+title: "MCP Servers (.mcp.json / config.toml)"
+doc: ../docs/06-mcp.md
+files:
+  claude:
+    - ".mcp.json"
+    - "~/.claude.json"  # local/user スコープは ~/.claude.json 内の mcpServers に格納
+  codex:
+    - "~/.codex/config.toml"
+    - ".codex/config.toml"
+format:
+  claude: json
+  codex: toml
+
+entries:
+  - id: mcp.format
+    claude:
+      field: "mcpServers"
+      type: "object"
+      scope: project
+    codex:
+      field: "mcp_servers"
+      type: "object"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: false
+    notes: "Claude は JSON ファイル（.mcp.json / ~/.claude.json）の `mcpServers` キー配下に格納。Codex は TOML ファイル（config.toml）の `[mcp_servers.<name>]` セクション。ファイル形式変換のみで値のセマンティクスは変わらない。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.transport_type
+    claude:
+      field: "type"
+      type: "enum(stdio|http|streamable-http|sse|ws)"
+      scope: project
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: false
+    notes: "Claude は明示的 `type` フィールドで transport を指定。Codex は `type` フィールドを持たず、`command` の有無で stdio、`url` の有無で streamable HTTP と暗黙判定する。Claude→Codex: `type` を削除し `command`/`url` の有無で代替。Codex→Claude: `command` 有なら `type:\"stdio\"`、`url` 有なら `type:\"http\"` を補完する。`streamable-http` は `http` の alias。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.transport_sse
+    claude:
+      field: "type"
+      type: "\"sse\""
+      scope: project
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex は SSE (Server-Sent Events) transport を非対応。Claude→Codex 変換では dropped + warn。`url` フィールドが存在する場合は HTTP transport（streamable-http）への手動移行を提案すること。SSE は Claude 側でも deprecated。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.transport_ws
+    claude:
+      field: "type"
+      type: "\"ws\""
+      scope: project
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex は WebSocket transport を非対応。Claude→Codex 変換では dropped + warn。`url` フィールドが存在する場合は HTTP transport への手動移行を提案すること。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.command
+    claude:
+      field: "command"
+      type: "string"
+      scope: project
+    codex:
+      field: "command"
+      type: "string"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: null
+    warn: false
+    notes: "stdio transport の起動コマンド。両者とも同名フィールドで値そのまま。Claude 側は `${VAR}` / `${VAR:-default}` の環境変数展開に対応。Codex 側も環境変数展開対応（変数展開構文の差異は要注意）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.args
+    claude:
+      field: "args"
+      type: "array<string>"
+      scope: project
+    codex:
+      field: "args"
+      type: "array<string>"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: null
+    warn: false
+    notes: "コマンド引数。両者とも同名フィールドで値そのまま。stdio 専用（http transport では Codex がエラーを返す）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.env
+    claude:
+      field: "env"
+      type: "object<string, string>"
+      scope: project
+    codex:
+      field: "env"
+      type: "object<string, string>"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: null
+    warn: false
+    notes: "サーバーに渡す環境変数（リテラル値）。両者とも同名フィールドで意味も同一。Claude 側は `${VAR}` 展開可。Codex の `env` は stdio 専用（http transport では使用不可）。Claude の `${VAR}` 参照は Codex の `env_vars` に移行が望ましいが、リテラル値としての変換は lossless。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.env_vars
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "env_vars"
+      type: "array<string|object>"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。ホスト環境変数をサーバーに転送する許可リスト。要素は文字列（変数名）または `{name: string, source: \"local\"|\"remote\"}` オブジェクト。Claude に直接対応するフィールドがない。Codex→Claude 変換では dropped + warn（必要な変数は Claude の `env` にリテラル値または `${VAR}` 展開で手動移行を促すこと）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.cwd
+    claude:
+      field: "cwd"
+      type: "string"
+      scope: project
+    codex:
+      field: "cwd"
+      type: "string (path)"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: null
+    warn: false
+    notes: "サーバープロセスの作業ディレクトリ。両者とも同名フィールドで値そのまま。Codex の remote stdio（`environment_id` が `\"local\"` 以外）では絶対パス必須（相対パスはエラー）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.url
+    claude:
+      field: "url"
+      type: "string"
+      scope: project
+    codex:
+      field: "url"
+      type: "string"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: null
+    warn: false
+    notes: "HTTP/SSE/WebSocket transport のエンドポイント URL。両者とも同名フィールドで値そのまま。Claude 側は `${VAR}` 展開可。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.headers
+    claude:
+      field: "headers"
+      type: "object<string, string>"
+      scope: project
+    codex:
+      field: "http_headers"
+      type: "object<string, string>"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: "rename"
+    warn: false
+    notes: "HTTP リクエストに付加する静的ヘッダ。キー名のみ異なる（`rename`）。`Authorization: \"Bearer ${VAR}\"` 形式の Bearer 認証は `mcp.bearer` エントリで別処理する。Codex の `env_http_headers` に変換すべき `${VAR}` 参照は `mcp.env_http_headers` エントリを参照。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.bearer
+    claude:
+      field: "headers.Authorization"
+      type: "string (\"Bearer ${VAR}\")"
+      scope: project
+    codex:
+      field: "bearer_token_env_var"
+      type: "string (環境変数名)"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "extract:bearer_env"
+    warn: true
+    notes: "Bearer 認証トークン。Claude→Codex: `headers.Authorization: \"Bearer ${VAR}\"` から環境変数名 `VAR` を抽出し `bearer_token_env_var = \"VAR\"` に変換。Codex→Claude: `bearer_token_env_var = \"VAR\"` を `headers.Authorization: \"Bearer ${VAR}\"` に展開。`\"Bearer ${VAR}\"` 以外の Authorization 値（例: `\"Token ${VAR}\"`）は lossy（Codex では `http_headers.Authorization` に静的値として変換するか、要手動対応）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.env_http_headers
+    claude:
+      field: "headers"
+      type: "object<string, string> (\"${VAR}\" 参照)"
+      scope: project
+    codex:
+      field: "env_http_headers"
+      type: "object<string, string> (ヘッダ名→環境変数名)"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: "ヘッダ値を環境変数から動的に取得する機構。Codex の `env_http_headers` はヘッダ名→環境変数名のマッピング（例: `{\"X-Auth\": \"AUTH_ENV\"}`）。Claude→Codex: `headers` 内の `${VAR}` 参照（例: `\"X-Auth\": \"${AUTH_ENV}\"`）を `env_http_headers: {\"X-Auth\": \"AUTH_ENV\"}` に変換可能（lossy: `${VAR:-default}` のデフォルト値は失われる）。Codex→Claude: `env_http_headers` を `headers` の `${VAR}` 形式に展開。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.timeout
+    claude:
+      field: "timeout"
+      type: "number (ms)"
+      scope: project
+    codex:
+      field: "tool_timeout_sec"
+      type: "number (秒, float)"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: "unit:ms_to_sec"
+    warn: false
+    notes: "ツール呼び出しごとのタイムアウト。Claude は ms 整数、Codex は秒の浮動小数点。変換: `unit:ms_to_sec`（例: `60000` → `60.0`）/ `unit:sec_to_ms`（例: `60.0` → `60000`）。Claude 側は 1000ms 未満を内部で 1000ms に切り上げる（Codex 変換後も `1.0` 秒以上となる）。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.startup_timeout
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "startup_timeout_sec"
+      type: "number (秒, float)"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。サーバー起動・初回ツールリスト取得のタイムアウト（既定 10 秒）。`startup_timeout_ms` も alias として存在。Claude では per-server 設定なし（グローバルな `MCP_TIMEOUT` 環境変数のみ）。Codex→Claude 変換では dropped + warn（必要に応じて `MCP_TIMEOUT` 環境変数への手動設定を提案すること）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.enabled
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "enabled"
+      type: "boolean"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。`false` で設定を残したままサーバーを無効化（既定 `true`）。Claude には `enabled` フィールドがなく、エントリが存在することが「有効」を意味する。Codex→Claude 変換: `enabled: false` のエントリは変換先 `.mcp.json` から除外し、変換レポートに除外したサーバー名を列挙すること。`enabled: true` は通常通り変換（省略可）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.alwaysLoad
+    claude:
+      field: "alwaysLoad"
+      type: "boolean"
+      scope: project
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Claude 固有フィールド（v2.1.121 以降）。Tool Search による遅延ロードを無効化し、セッション開始時に全ツールをコンテキストにロードする設定。Codex に Tool Search / 遅延ロード機構がないため対応概念なし。Claude→Codex 変換では dropped + warn。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.headersHelper
+    claude:
+      field: "headersHelper"
+      type: "string (シェルコマンド)"
+      scope: project
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Claude 固有フィールド。接続時にシェルコマンドを実行し、stdout の JSON オブジェクトを動的ヘッダとして使用する。Kerberos・短命トークン・内部 SSO などのカスタム認証に使用。Codex に動的ヘッダ生成機構がないため対応なし。Claude→Codex 変換では dropped + warn。Bearer 認証の場合は `bearer_token_env_var` への変換を提案すること（セキュリティ要件が許す場合）。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.oauth.client_id
+    claude:
+      field: "oauth.clientId"
+      type: "string"
+      scope: project
+    codex:
+      field: "oauth.client_id"
+      type: "string"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: "rename"
+    warn: false
+    notes: "OAuth クライアント ID。フィールド名のみ異なる（`rename`: `clientId` ↔ `client_id`）。値はそのまま。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.oauth.callback_port
+    claude:
+      field: "oauth.callbackPort"
+      type: "number"
+      scope: project
+    codex:
+      field: "mcp_oauth_callback_port"
+      type: "number (u16)"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: "OAuth コールバック用ローカルポート。Claude は per-server フィールド（`oauth.callbackPort`）。Codex はトップレベルフィールド（`mcp_oauth_callback_port`、全 MCP サーバー共通）。複数サーバーが異なる `callbackPort` を持つ Claude 設定を Codex に変換する場合、最後の値のみが有効になる（衝突 lossy）。変換レポートに衝突があった場合は警告すること。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/config_toml.rs"
+
+  - id: mcp.oauth.scopes
+    claude:
+      field: "oauth.scopes"
+      type: "string (スペース区切り)"
+      scope: project
+    codex:
+      field: "scopes"
+      type: "array<string>"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: "str_to_list:space"
+    warn: false
+    notes: "OAuth スコープ。Claude は RFC 6749 §3.3 準拠のスペース区切り文字列（例: `\"channels:read chat:write\"`）。Codex は文字列の配列（例: `[\"channels:read\", \"chat:write\"]`）。`str_to_list:space` / `list_to_str:space` で相互変換。値のセマンティクスは同一（lossless）。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.oauth.auth_server_metadata_url
+    claude:
+      field: "oauth.authServerMetadataUrl"
+      type: "string (URL)"
+      scope: project
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Claude 固有フィールド（v2.1.64 以降）。OAuth 認可サーバーメタデータ URL の上書き（RFC 9728 / RFC 8414 の自動探索をバイパス）。Codex に対応機構なし。Claude→Codex 変換では dropped + warn（OAuth フローが失敗する可能性があることを警告すること）。"
+    source: "https://code.claude.com/docs/en/mcp"
+
+  - id: mcp.oauth_resource
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "oauth_resource"
+      type: "string (URL)"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。RFC 8707 OAuth Resource Parameter を OAuth フロー中にサーバーへ送信する。Claude に対応なし。Codex→Claude 変換では dropped + warn。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.enabled_tools
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "enabled_tools"
+      type: "array<string>"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。サーバーが公開するツールのホワイトリスト（セットすると列挙されたツールのみ登録される）。Claude に対応フィールドなし。Codex→Claude 変換では dropped + warn（Claude 側でツールが全て露出することを警告すること）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.disabled_tools
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "disabled_tools"
+      type: "array<string>"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。ツールのブラックリスト（`enabled_tools` 適用後に除外）。Claude に対応フィールドなし。Codex→Claude 変換では dropped + warn。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.default_tools_approval_mode
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "default_tools_approval_mode"
+      type: "enum(auto|prompt|approve)"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。サーバー全ツールのデフォルト承認モード（per-tool override がない場合に適用）。`auto`: 自動承認、`prompt`: 毎回確認、`approve`: 明示的承認必須。Claude に対応機構なし。Codex→Claude 変換では dropped + warn。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.tools_approval_mode
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "tools.<name>.approval_mode"
+      type: "enum(auto|prompt|approve)"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。特定ツールの承認モード per-tool 上書き。`[mcp_servers.<server>.tools.<tool_name>]` セクションの `approval_mode` フィールド。Claude に対応なし。Codex→Claude 変換では dropped + warn。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.required
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "required"
+      type: "boolean"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド。`true` の場合、このサーバーが初期化に失敗すると `codex exec` が終了エラーになる。Claude に対応なし。Codex→Claude 変換では dropped + warn。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.supports_parallel_tool_calls
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "supports_parallel_tool_calls"
+      type: "boolean"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: "Codex 固有フィールド。`true` の場合、このサーバーの全ツールを並列ツール呼び出し安全とマーク（既定 `false`）。Claude に対応なし。Codex→Claude 変換では dropped（情報損失だが動作への影響は限定的なため warn は false）。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+  - id: mcp.environment_id
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "environment_id"
+      type: "string"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: "Codex 固有フィールド（experimental）。MCP サーバーの実行環境指定。`\"local\"`（既定）または `\"remote\"`（リモートエグゼキュータで stdio 実行）。Claude に対応なし。Codex→Claude 変換では dropped + warn。"
+    source: "https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs"
+
+notes:
+  - "transport 判定ロジックの根本差異（Claude: 明示 `type` / Codex: `command`/`url` の有無）により、双方向変換エンジンはトランスポート判定ロジックを独立して実装する必要がある。"
+  - "sse/ws → Codex 変換は常に dropped。変換エンジンは HTTP エンドポイントが存在する場合のみ http transport への自動変換を試み、それ以外は手動対応を促すこと。"
+  - "Codex→Claude 変換で `enabled: false` のエントリは出力から除外する（Claude では `enabled` フィールドが存在せず、エントリ削除が唯一の無効化手段）。変換レポートに除外サーバー名を必ず列挙すること。"
+  - "OAuth `callbackPort` のスコープ差（per-server vs トップレベル）は実際のプロジェクトで衝突リスクがあり、変換ツールは衝突を検出して警告すること。"
+  - "Codex の `mcp_types.rs` の `RawMcpServerConfig` 構造体が機械的な信頼できる唯一の情報源。`deny_unknown_fields` 属性により未知フィールドはデシリアライズエラーになるため、変換エンジンは列挙されたフィールドのみを出力すること。"
+  - "Codex 仕様は 2025-2026 年に大幅更新中。`bearer_token`（`schemars(skip)` で schema 非公開）など非推奨フィールドが存在するため、実装時は source URL のコミットハッシュも確認すること。"

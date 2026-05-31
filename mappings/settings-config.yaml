@@ -1,0 +1,1038 @@
+domain: settings-config
+title: "Settings & Config (settings.json ⇄ config.toml)"
+doc: ../docs/07-settings-and-config.md
+files:
+  claude:
+    - "~/.claude/settings.json"
+    - ".claude/settings.json"
+    - ".claude/settings.local.json"
+    - "managed settings (enterprise)"
+  codex:
+    - "~/.codex/config.toml"
+    - ".codex/config.toml"
+    - "~/.codex/<name>.config.toml"
+    - "/etc/codex/config.toml"
+    - "requirements.toml (managed)"
+format:
+  claude: json
+  codex: toml
+entries:
+
+  # ─── モデル・動作 ────────────────────────────────────────────────
+
+  - id: settings.model
+    claude:
+      field: "model"
+      type: "string"
+      scope: user
+    codex:
+      field: "model"
+      type: "string"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      モデル ID 書式が完全に別体系（`claude-opus-4-6` ⇔ `gpt-5.x`）。
+      機械的な文字列変換は不可。変換 CLI は別途モデルマッピングテーブルを保持し、
+      未知 ID の場合は変換を保留してレポートに明記すること。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.effortLevel
+    claude:
+      field: "effortLevel"
+      type: "enum(low|medium|high|xhigh|max)"
+      scope: user
+    codex:
+      field: "model_reasoning_effort"
+      type: "enum(minimal|low|medium|high|xhigh)"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "enum_map:{max:xhigh}"
+    warn: true
+    notes: |
+      Claude の `max` は Codex に存在しないため `xhigh` に丸める（claude_to_codex）。
+      Codex の `minimal` は Claude に対応値がないため dropped（codex_to_claude）。
+      低 effort 側（low/medium/high）は 1:1 対応。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.language
+    claude:
+      field: "language"
+      type: "string"
+      scope: user
+    codex:
+      field: "developer_instructions"
+      type: "string"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に独立した `language` フィールドなし。
+      `developer_instructions` に自然言語で言語指定を追記することで近似
+      （例: 「常に日本語で回答してください」）。意味は保たれるが独立フィールドとしての情報は失われる。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.defaultShell
+    claude:
+      field: "defaultShell"
+      type: "enum(bash|powershell)"
+      scope: user
+    codex:
+      field: "shell_environment_policy.experimental_use_profile"
+      type: "boolean"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      意味が異なる。Claude `defaultShell` はシェル選択そのもの。
+      Codex `experimental_use_profile` はプロセス起動時にシェルプロファイルを使用するか否か。
+      `defaultShell: "bash"` → `experimental_use_profile=false` は既定値なのでほぼ変換不要。
+      `defaultShell: "powershell"` は Windows 限定で Codex に明確な対応なし（lossy）。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.outputStyle
+    claude:
+      field: "outputStyle"
+      type: "string"
+      scope: user
+    codex:
+      field: "developer_instructions"
+      type: "string"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Codex に独立した outputStyle フィールドなし。
+      `developer_instructions` への追記で近似可能。
+    source: "https://code.claude.com/docs/en/settings"
+
+  # ─── 権限: Bash コマンド ─────────────────────────────────────────
+
+  - id: settings.permissions.allow.bash
+    claude:
+      field: "permissions.allow"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "[permissions.<name>] rules execpolicy allow"
+      type: "object"
+      scope: project
+    direction: claude_to_codex
+    loss: lossy
+    degrade:
+      to: project
+      target: ".codex/rules/default.rules (prefix_rule decision=\"allow\")"
+    transform: null
+    warn: true
+    notes: |
+      Claude の `permissions.allow: ["Bash(npm run *)"]` パターンを
+      Codex の `.rules` ファイルの `prefix_rule(pattern=[...], decision="allow")` に変換。
+      元の skill スコープが project/session スコープに拡大するため必ず warn を出す。
+      `features.hooks=true` および project の trust が必要。
+      組み込みツールの事前承認（AskUserQuestion 等）は代替なし → dropped。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.permissions.deny.bash
+    claude:
+      field: "permissions.deny"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "[permissions.<name>] rules execpolicy forbidden"
+      type: "object"
+      scope: project
+    direction: claude_to_codex
+    loss: lossy
+    degrade:
+      to: project
+      target: ".codex/rules/default.rules (prefix_rule decision=\"forbidden\")"
+    transform: null
+    warn: true
+    notes: |
+      Claude の `permissions.deny: ["Bash(rm -rf *)"]` を
+      Codex `.rules` の `prefix_rule decision="forbidden"` に変換。
+      組み込みツール（AskUserQuestion 等）の禁止は代替なし → dropped。
+      スコープが拡大するため warn 必須。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.permissions.ask.bash
+    claude:
+      field: "permissions.ask"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "[permissions.<name>] rules execpolicy prompt"
+      type: "object"
+      scope: project
+    direction: claude_to_codex
+    loss: lossy
+    degrade:
+      to: project
+      target: ".codex/rules/default.rules (prefix_rule decision=\"prompt\")"
+    transform: null
+    warn: true
+    notes: |
+      Claude の `permissions.ask: ["Bash(git push *)"]` を
+      Codex `.rules` の `prefix_rule decision="prompt"` に変換。
+      `approval_policy.granular.rules=true` も必要。
+      粒度が異なるため lossy。スコープ拡大のため warn 必須。
+    source: "https://developers.openai.com/codex/permissions"
+
+  # ─── 権限: ファイルシステム ──────────────────────────────────────
+
+  - id: settings.permissions.allow.read
+    claude:
+      field: "permissions.allow"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.filesystem.<path>"
+      type: "string(\"read\")"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: true
+    notes: |
+      Claude `permissions.allow: ["Read(~/docs)"]` → Codex `[permissions.X].filesystem."~/docs"="read"`.
+      ツール軸（Read）→ リソース軸（filesystem path）への変換。
+      Claude での Read/Write/Edit のツール境界が Codex では区別されない点が lossy。
+      パスの正規化（`~/` の展開等）が必要。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.permissions.deny.read
+    claude:
+      field: "permissions.deny"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.filesystem.<path>"
+      type: "string(\"deny\")"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: true
+    notes: |
+      Claude `permissions.deny: ["Read(~/.env)"]` → Codex `[permissions.X].filesystem."~/.env"="deny"`.
+      Read と Write 両方の deny が Codex では 1 つの `deny` エントリになるため lossy。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.permissions.allow.write
+    claude:
+      field: "permissions.allow"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.filesystem.<path>"
+      type: "string(\"write\")"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: true
+    notes: |
+      Claude `permissions.allow: ["Write(/tmp/build)"]` → Codex `[permissions.X].filesystem."/tmp/build"="write"`.
+      Read/Write/Edit ツールの区別が失われる（Codex は write = read + write + delete）。
+    source: "https://developers.openai.com/codex/permissions"
+
+  # ─── 権限: ネットワーク ─────────────────────────────────────────
+
+  - id: settings.permissions.allow.webfetch
+    claude:
+      field: "permissions.allow"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.network.domains.<domain>"
+      type: "string(\"allow\")"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: true
+    notes: |
+      Claude `permissions.allow: ["WebFetch(domain:api.example.com)"]` →
+      Codex `[permissions.X].network.domains."api.example.com"="allow"`.
+      文字列配列 → ドメインキーの TOML table へ変換。
+      Claude のワイルドカード記法（`*.example.com`）と Codex の記法（`*.example.com`/`**.example.com`）を確認すること。
+      `network.enabled=true` も必要。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.permissions.deny.webfetch
+    claude:
+      field: "permissions.deny"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.network.domains.<domain>"
+      type: "string(\"deny\")"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: false
+    notes: |
+      Claude `permissions.deny: ["WebFetch(domain:bad.com)"]` →
+      Codex `[permissions.X].network.domains."bad.com"="deny"`.
+      デフォルトで Codex はローカルアドレス等をブロックするため、明示的 deny は追加的保護になる。
+    source: "https://developers.openai.com/codex/permissions"
+
+  # ─── 権限: defaultMode ──────────────────────────────────────────
+
+  - id: settings.permissions.defaultMode.bypassPermissions
+    claude:
+      field: "permissions.defaultMode"
+      type: "enum(bypassPermissions)"
+      scope: user
+    codex:
+      field: "approval_policy + sandbox_mode"
+      type: "string"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude `defaultMode: "bypassPermissions"` →
+      Codex `approval_policy="never"` + `sandbox_mode="danger-full-access"` の組み合わせで近似。
+      完全等価ではなく 2 フィールドの組み合わせ。セキュリティリスクを warn に明記すること。
+    source: "https://developers.openai.com/codex/agent-approvals-security"
+
+  - id: settings.permissions.defaultMode.acceptEdits
+    claude:
+      field: "permissions.defaultMode"
+      type: "enum(acceptEdits)"
+      scope: user
+    codex:
+      field: "approval_policy"
+      type: "string(\"untrusted\")"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude `defaultMode: "acceptEdits"` → Codex `approval_policy="untrusted"` で近似。
+      意味に差異あり（Claude は edit 系ツールを自動承認、Codex は読み取り操作を自動承認して
+      状態変更操作に承認要求）。
+    source: "https://developers.openai.com/codex/agent-approvals-security"
+
+  - id: settings.permissions.defaultMode.auto
+    claude:
+      field: "permissions.defaultMode"
+      type: "enum(auto)"
+      scope: user
+    codex:
+      field: "approval_policy"
+      type: "string(\"on-request\")"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Claude `defaultMode: "auto"` → Codex `approval_policy="on-request"`（Codex 既定値）で近似。
+      どちらも「境界越えで確認」という基本動作は近似している。
+    source: "https://developers.openai.com/codex/agent-approvals-security"
+
+  - id: settings.permissions.defaultMode.plan
+    claude:
+      field: "permissions.defaultMode"
+      type: "enum(plan)"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に plan モード相当なし。dropped。
+      変換レポートに「Codex では plan モードが利用できない」と明記すること。
+    source: "https://code.claude.com/docs/en/settings"
+
+  # ─── サンドボックス ─────────────────────────────────────────────
+
+  - id: settings.sandbox.filesystem.allowWrite
+    claude:
+      field: "sandbox.filesystem.allowWrite"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.filesystem.<path> or sandbox_workspace_write.writable_roots"
+      type: "object/string[]"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: true
+    notes: |
+      Claude 文字列配列 → Codex TOML table（パスをキー、`"write"` を値）へ変換。
+      新方式（`default_permissions` + `[permissions.*]`）か旧方式（`sandbox_workspace_write.writable_roots`）
+      かを変換先で統一すること。両方を同時に使うと Codex がどちらか一方のみ適用する。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.sandbox.filesystem.denyWrite
+    claude:
+      field: "sandbox.filesystem.denyWrite"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.filesystem.<path>"
+      type: "string(\"deny\")"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: false
+    notes: |
+      Claude 配列 → Codex `[permissions.X].filesystem` table のキー/値に変換。
+      読み込みと書き込みの deny を統合したエントリになるため lossy（Claude は write のみ deny も可）。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.sandbox.filesystem.allowRead
+    claude:
+      field: "sandbox.filesystem.allowRead"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.filesystem.<path>"
+      type: "string(\"read\")"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: false
+    notes: |
+      Claude 配列 → Codex `[permissions.X].filesystem` table に変換。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.sandbox.filesystem.denyRead
+    claude:
+      field: "sandbox.filesystem.denyRead"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.filesystem.<path>"
+      type: "string(\"deny\")"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: false
+    notes: |
+      読み込みと書き込みの deny が統合されるため lossy（Claude では denyRead のみ指定可）。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.sandbox.network.allowedDomains
+    claude:
+      field: "sandbox.network.allowedDomains"
+      type: "string[]"
+      scope: user
+    codex:
+      field: "permissions.<name>.network.domains"
+      type: "object"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: true
+    notes: |
+      Claude 文字列配列（`["api.example.com", "*.cdn.net"]`）→
+      Codex TOML table（`"api.example.com"="allow"`, `"*.cdn.net"="allow"`）へ変換（`str_to_list` 逆）。
+      ワイルドカード記法（`*` vs `**` の意味差）に注意。`network.enabled=true` も必要。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.sandbox.network.allowAllUnixSockets
+    claude:
+      field: "sandbox.network.allowAllUnixSockets"
+      type: "boolean"
+      scope: user
+    codex:
+      field: "dangerously_allow_all_unix_sockets"
+      type: "boolean"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: "rename"
+    warn: true
+    notes: |
+      フィールド名の rename のみ。意味・型は完全一致（lossless）。
+      `dangerously_` プレフィックスが示すように危険な設定のため warn を出す。
+    source: "https://developers.openai.com/codex/concepts/sandboxing"
+
+  - id: settings.sandbox.network.allowMachLookup
+    claude:
+      field: "sandbox.network.allowMachLookup"
+      type: "string[]"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      macOS 固有の Mach lookup 許可リスト。Codex に対応フィールドなし。
+      dropped として変換レポートに明記すること。
+    source: "https://code.claude.com/docs/en/settings"
+
+  # ─── 環境変数 ──────────────────────────────────────────────────
+
+  - id: settings.env
+    claude:
+      field: "env"
+      type: "object"
+      scope: user
+    codex:
+      field: "shell_environment_policy.set"
+      type: "object"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "format:json_to_toml"
+    warn: true
+    notes: |
+      Claude の `env` はセッション全体（Claude プロセス自身も含む）への注入。
+      Codex の `shell_environment_policy.set` はサブプロセス（Bash 等）への注入のみ。
+      `ANTHROPIC_API_KEY` 等 Claude 自身が参照する変数は Codex 側では shell_environment_policy では効かない。
+      スコープ差を変換レポートに明記すること。
+      また Codex の `inherit`（`all`/`core`/`none`）・`exclude`・`include_only` は Claude に対応なし。
+    source: "https://developers.openai.com/codex/config-advanced"
+
+  # ─── Hooks・MCP（別ドキュメント参照） ──────────────────────────
+
+  # hooks と mcpServers は本 yaml のエントリ対象外。
+  # 詳細は docs/05-hooks.md および docs/06-mcp.md / mappings/hooks.yaml / mappings/mcp.yaml を参照。
+
+  # ─── メモリ・セッション管理 ────────────────────────────────────
+
+  - id: settings.autoMemoryEnabled
+    claude:
+      field: "autoMemoryEnabled"
+      type: "boolean"
+      scope: user
+    codex:
+      field: "memories.use_memories + memories.generate_memories"
+      type: "boolean"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude の 1 フィールド → Codex の 2 フィールド（use_memories + generate_memories）。
+      両方 true で Claude の `autoMemoryEnabled: true` に相当。
+      `features.memories=true` も別途必要。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.cleanupPeriodDays
+    claude:
+      field: "cleanupPeriodDays"
+      type: "integer"
+      scope: user
+    codex:
+      field: "memories.max_rollout_age_days"
+      type: "integer"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude はセッション保持日数（最小 1）。
+      Codex の `memories.max_rollout_age_days` はメモリ生成対象スレッドの最大経過日数（0-90）で意味が近い。
+      ただし `history.max_bytes`（バイト上限）は全く意味が異なる。
+      変換先は `memories.max_rollout_age_days` を使い、値の範囲（0-90）に clamp すること。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  # ─── Git・帰属 ──────────────────────────────────────────────────
+
+  - id: settings.attribution.commit
+    claude:
+      field: "attribution.commit"
+      type: "string"
+      scope: user
+    codex:
+      field: "commit_attribution"
+      type: "string"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: "rename"
+    warn: false
+    notes: |
+      `rename` のみ。意味は近いが書式差異に注意。
+      Claude は co-authored-by 文字列全体を自由記述、Codex は `Name <email>` 形式推奨。
+      フォーマット差がある場合は lossy として扱う。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.includeCoAuthoredBy
+    claude:
+      field: "includeCoAuthoredBy"
+      type: "boolean"
+      scope: user
+    codex:
+      field: "commit_attribution"
+      type: "string"
+      scope: user
+    direction: claude_to_codex
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      deprecated フィールド。
+      `includeCoAuthoredBy: false` → `commit_attribution=""` で無効化を近似。
+      `includeCoAuthoredBy: true` → Codex 側はデフォルト値を維持（`"Codex <noreply@openai.com>"`）。
+    source: "https://code.claude.com/docs/en/settings"
+
+  # ─── UI・エディタ ─────────────────────────────────────────────
+
+  - id: settings.editorMode
+    claude:
+      field: "editorMode"
+      type: "enum(normal|vim)"
+      scope: user
+    codex:
+      field: "tui.vim_mode_default"
+      type: "boolean"
+      scope: user
+    direction: both
+    loss: lossless
+    degrade: null
+    transform: "enum_map:{vim:true,normal:false}"
+    warn: false
+    notes: |
+      Claude `editorMode: "vim"` ⇔ Codex `tui.vim_mode_default=true`。
+      lossless な rename + enum→boolean 変換。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.statusLine
+    claude:
+      field: "statusLine"
+      type: "object"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に Claude の statusLine 等価物なし。
+      `tui.status_line`（配列）は Codex 固有の footer 表示設定で意味が異なる。
+      dropped として変換レポートに明記すること。
+    source: "https://code.claude.com/docs/en/settings"
+
+  # ─── skills・plugins ──────────────────────────────────────────
+
+  - id: settings.skillOverrides
+    claude:
+      field: "skillOverrides"
+      type: "object(on|off|name-only|user-invocable-only)"
+      scope: user
+    codex:
+      field: "skills.config[].enabled"
+      type: "boolean"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Claude は `on`/`off`/`name-only`/`user-invocable-only` の 4 値で細粒度制御。
+      Codex は `enabled: true/false` の 2 値のみ（`SkillConfig` は additionalProperties:false）。
+      `name-only`/`user-invocable-only` は Codex で表現不可 → lossy。
+      変換レポートに細粒度制御が失われた旨を明記すること。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.enabledPlugins
+    claude:
+      field: "enabledPlugins"
+      type: "object"
+      scope: user
+    codex:
+      field: "plugins.*"
+      type: "object"
+      scope: user
+    direction: both
+    loss: lossy
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      プラグイン体系が異なる（Claude plugins ⇔ Codex plugins）。
+      名前空間・設定構造ともに異なるため機械的変換は困難。
+      近似対応のみ可能。同一プラグインが両方に存在する場合のみ変換を試みること。
+    source: "https://code.claude.com/docs/en/settings"
+
+  # ─── Claude 固有 → Codex dropped ──────────────────────────────
+
+  - id: settings.viewMode
+    claude:
+      field: "viewMode"
+      type: "enum(default|verbose|focus)"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に対応する表示モード区分なし。dropped。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.worktree
+    claude:
+      field: "worktree"
+      type: "object"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex に git worktree 管理機能なし。`worktree.*` 全体を dropped として変換レポートに明記。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.autoUpdatesChannel
+    claude:
+      field: "autoUpdatesChannel"
+      type: "enum(stable|latest)"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Codex に等価の update チャンネル設定なし（`check_for_update_on_startup` は ON/OFF のみ）。
+      dropped。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.spinnerTips
+    claude:
+      field: "spinnerTipsEnabled / spinnerTipsOverride / spinnerVerbs"
+      type: "boolean/object"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Claude UI 固有の spinner 関連設定。Codex に対応なし。dropped。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.voice
+    claude:
+      field: "voice / voiceEnabled"
+      type: "object/boolean"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Claude の音声ディクテーション機能。Codex に対応なし。dropped。
+    source: "https://code.claude.com/docs/en/settings"
+
+  - id: settings.maxSkillDescriptionChars
+    claude:
+      field: "maxSkillDescriptionChars / skillListingBudgetFraction"
+      type: "integer/number"
+      scope: user
+    codex:
+      field: null
+      type: null
+      scope: null
+    direction: claude_to_codex
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Claude 固有の skill コンテキスト予算調整フィールド。Codex に対応なし。dropped。
+    source: "https://code.claude.com/docs/en/settings"
+
+  # ─── Codex 固有 → Claude dropped/lossy ────────────────────────
+
+  - id: settings.codex.profiles
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "~/.codex/<name>.config.toml (profiles)"
+      type: "file"
+      scope: profile
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex の名前付き設定プロファイル（`~/.codex/<name>.config.toml`）。
+      Claude にプロファイル概念なし。dropped。
+      変換時は複数プロファイルのうち 1 つを選択して変換するか、複数の settings.json として出力するかを
+      ユーザーに確認すること。
+    source: "https://developers.openai.com/codex/config-advanced"
+
+  - id: settings.codex.permissions_inheritance
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "permissions.<name>.extends"
+      type: "string"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex の権限プロファイル継承（`extends`）。Claude に権限プロファイル継承概念なし。
+      変換時は継承チェーンを展開してフラットな allow/deny リストに変換を試みること。
+    source: "https://developers.openai.com/codex/permissions"
+
+  - id: settings.codex.granular_approval
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "approval_policy.granular.*"
+      type: "object"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: true
+    notes: |
+      Codex の granular 承認ポリシー（skill_approval/mcp_elicitations/sandbox_approval 等）。
+      Claude に個別承認カテゴリ分離なし。dropped。
+      変換時は最も近い `defaultMode` 値に近似することを検討すること。
+    source: "https://developers.openai.com/codex/agent-approvals-security"
+
+  - id: settings.codex.agents_config
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "agents.max_threads / agents.max_depth"
+      type: "integer"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Codex のエージェント並列度・深度設定。Claude に直接対応なし。dropped。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.codex.otel
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "otel.*"
+      type: "object"
+      scope: user
+    direction: codex_to_claude
+    loss: lossy
+    degrade:
+      to: session
+      target: "claude settings.json の env（OTEL_* 環境変数）"
+    transform: null
+    warn: true
+    notes: |
+      Claude は独立した otel セクションを持たない。
+      `env.OTEL_EXPORTER_OTLP_ENDPOINT` 等の環境変数経由で近似可能（lossy）。
+      `otel.log_user_prompt` 等の Codex 固有フラグは代替なし。
+    source: "https://developers.openai.com/codex/config-advanced"
+
+  - id: settings.codex.tui_keymap
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "tui.keymap.*"
+      type: "object"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Codex のプログラマブルキーバインド設定。Claude に programmatic keymap 設定なし。dropped。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.codex.model_verbosity
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "model_verbosity / model_reasoning_summary"
+      type: "enum"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      GPT-5 応答冗長性・推論サマリー詳細設定。Claude に対応フィールドなし。dropped。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.codex.web_search
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "web_search"
+      type: "enum(disabled|cached|live)"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      Codex の web search 専用フラグ。Claude は WebFetch tool で代替するが独立したモード切替フィールドなし。
+      dropped。
+    source: "https://developers.openai.com/codex/config-reference"
+
+  - id: settings.codex.project_doc_max_bytes
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "project_doc_max_bytes"
+      type: "integer"
+      scope: user
+    direction: codex_to_claude
+    loss: dropped
+    degrade: null
+    transform: null
+    warn: false
+    notes: |
+      AGENTS.md 等の最大読み込みバイト数制限。Claude に対応なし。dropped。
+    source: "https://developers.openai.com/codex/config-advanced"
+
+  - id: settings.codex.developer_instructions
+    claude:
+      field: null
+      type: null
+      scope: null
+    codex:
+      field: "developer_instructions"
+      type: "string"
+      scope: user
+    direction: codex_to_claude
+    loss: lossy
+    degrade:
+      to: project
+      target: "CLAUDE.md（プロジェクト）または ~/.claude/CLAUDE.md（ユーザー）"
+    transform: null
+    warn: false
+    notes: |
+      Codex `developer_instructions` はセッションに注入する追加指示。
+      Claude は CLAUDE.md（ユーザー/プロジェクト）で同機能を提供。
+      テキスト内容を CLAUDE.md に追記することで近似（lossy: スコープが project に固定）。
+    source: "https://developers.openai.com/codex/config-reference"
+
+notes:
+  - |
+    settings.json ⇄ config.toml の完全自動変換は非現実的。
+    CLI ツールが現実的に扱える対象は model・effortLevel・env・sandbox 基本項目・editorMode・attribution に絞るべき。
+    変換レポートには dropped/lossy 全エントリを必ず列挙すること。
+  - |
+    権限モデルが根本的に異なる（ツール軸 vs リソース軸）。
+    Claude `permissions.allow/deny/ask` の各エントリは Codex で 1:1 対応せず、
+    filesystem・network.domains・.rules（execpolicy）の 3 つに分散変換が必要。
+  - |
+    hooks と mcpServers は本 yaml のエントリ対象外。
+    docs/05-hooks.md / mappings/hooks.yaml（hooks）および docs/06-mcp.md / mappings/mcp.yaml（MCP）を参照。
+  - |
+    Codex の `sandbox_mode`/`sandbox_workspace_write`（旧方式）と
+    `default_permissions`/`[permissions.*]`（新方式）は排他。新規変換では新方式を推奨。
+  - |
+    Codex settings のうち流動的な仕様（2025-2026 の新機能: features.memories, features.hooks,
+    features.multi_agent, approval_policy.granular 等）は実装時に source URL のバージョンを再検証すること。

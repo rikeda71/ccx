@@ -1,0 +1,34 @@
+{
+  "model": "claude-sonnet-4-6",
+  "effortLevel": "high",
+  "editorMode": "vim",
+  "permissions": {
+    "allow": ["Bash(cargo build)", "Bash(cargo test)", "Read(**/*.rs)"],
+    "deny": ["Bash(rm -rf)"],
+    "ask": ["Bash(git push)"]
+  },
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["/tmp/build"],
+      "denyRead": ["~/.env", "~/.ssh"]
+    },
+    "network": {
+      "allowedDomains": ["api.github.com", "crates.io"],
+      "allowAllUnixSockets": false
+    }
+  },
+  "env": {
+    "RUST_LOG": "info",
+    "CARGO_TERM_COLOR": "always"
+  },
+  "attribution": {
+    "commit": "Claude Code <noreply@anthropic.com>"
+  },
+  "autoMemoryEnabled": true,
+  "cleanupPeriodDays": 30,
+  "viewMode": "default",
+  "worktree": {
+    "enabled": false
+  },
+  "autoUpdatesChannel": "stable"
+}

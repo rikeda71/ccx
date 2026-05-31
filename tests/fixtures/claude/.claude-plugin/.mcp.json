@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "plugin-server": {
+      "command": "npx",
+      "args": ["-y", "@demo/plugin-server"]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+env = {DEBUG = "1"}
+tool_timeout_sec = 30.0
+
+[mcp_servers.api-server]
+url = "https://api.example.com/mcp"
+bearer_token_env_var = "API_TOKEN"
+http_headers = {X-Custom = "value"}
+
+[mcp_servers.disabled-server]
+command = "node"
+args = ["server.js"]
+enabled = false

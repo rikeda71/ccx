@@ -1,0 +1,32 @@
+[package]
+name = "ccx"
+version = "0.1.0"
+edition = "2021"
+description = "Claude Code ⇄ Codex 設定ファイル双方向変換 CLI"
+
+[[bin]]
+name = "ccx"
+path = "src/main.rs"
+
+[lib]
+name = "ccx"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde-saphyr = "0.0.5"
+toml = "0.8"
+toml_edit = "0.22"
+gray_matter = "0.2"
+regex = "1"
+once_cell = "1"
+anyhow = "1"
+dialoguer = "0.11"
+walkdir = "2"
+shlex = "1"
+
+[dev-dependencies]
+insta = { version = "1", features = ["json"] }
+tempfile = "3.27.0"

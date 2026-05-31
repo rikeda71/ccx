@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": {
+        "DEBUG": "1"
+      },
+      "timeout": 30000
+    },
+    "api-server": {
+      "type": "http",
+      "url": "https://api.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${API_TOKEN}",
+        "X-Custom": "value"
+      }
+    },
+    "oauth-server": {
+      "type": "http",
+      "url": "https://oauth.example.com/mcp",
+      "oauth": {
+        "clientId": "my-client-id",
+        "scopes": "read write admin"
+      }
+    },
+    "disabled-server": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["server.js"],
+      "alwaysLoad": true
+    }
+  }
+}

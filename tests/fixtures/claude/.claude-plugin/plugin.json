@@ -1,0 +1,25 @@
+{
+  "name": "demo-plugin",
+  "version": "1.0.0",
+  "description": "A demo plugin for testing",
+  "author": {
+    "name": "Demo Author",
+    "email": "demo@example.com"
+  },
+  "homepage": "https://example.com/demo-plugin",
+  "license": "MIT",
+  "keywords": ["demo", "test"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "lspServers": "./.lsp.json",
+  "outputStyles": "./styles/",
+  "userConfig": {
+    "API_KEY": {
+      "type": "string",
+      "title": "API Key",
+      "description": "Your API key",
+      "sensitive": true,
+      "required": true
+    }
+  }
+}
