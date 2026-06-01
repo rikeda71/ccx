@@ -110,27 +110,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
-name = "ccx"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dialoguer",
- "gray_matter",
- "insta",
- "once_cell",
- "regex",
- "serde",
- "serde-saphyr",
- "serde_json",
- "shlex",
- "tempfile",
- "toml 0.8.23",
- "toml_edit",
- "walkdir",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -204,6 +183,27 @@ dependencies = [
  "encode_unicode",
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "cxbridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dialoguer",
+ "gray_matter",
+ "insta",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "shlex",
+ "tempfile",
+ "toml 0.8.23",
+ "toml_edit",
+ "walkdir",
 ]
 
 [[package]]

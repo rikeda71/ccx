@@ -3,11 +3,11 @@ use common::*;
 
 use std::path::Path;
 
-use ccx::core::ir::{DiagLevel, Kind};
-use ccx::core::{
+use cxbridge::core::ir::{DiagLevel, Kind};
+use cxbridge::core::{
     detect::detect, mappings::load_mappings, report::build_report, transforms::ConvDir,
 };
-use ccx::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
+use cxbridge::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Settings tests (from roundtrip.rs)
@@ -25,7 +25,7 @@ fn test_settings_c2x_generates_config_toml() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(settings_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Settings);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Settings);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -35,7 +35,7 @@ fn test_settings_c2x_generates_config_toml() {
         .lift(&parsed, ConvDir::C2x)
         .expect("lift should succeed");
 
-    assert_eq!(ir.kind, ccx::core::ir::Kind::Settings);
+    assert_eq!(ir.kind, cxbridge::core::ir::Kind::Settings);
 
     assert!(ir.fields.contains_key("settings.model"));
     assert!(ir.fields.contains_key("settings.effortLevel"));
@@ -49,7 +49,7 @@ fn test_settings_c2x_generates_config_toml() {
     let has_viewmode_dropped = ir
         .fields
         .get("settings.viewMode")
-        .map(|f| matches!(f.loss, ccx::core::ir::Loss::Dropped))
+        .map(|f| matches!(f.loss, cxbridge::core::ir::Loss::Dropped))
         .unwrap_or(false);
     assert!(
         has_viewmode_dropped,
@@ -59,7 +59,7 @@ fn test_settings_c2x_generates_config_toml() {
     let has_worktree_dropped = ir
         .fields
         .get("settings.worktree")
-        .map(|f| matches!(f.loss, ccx::core::ir::Loss::Dropped))
+        .map(|f| matches!(f.loss, cxbridge::core::ir::Loss::Dropped))
         .unwrap_or(false);
     assert!(
         has_worktree_dropped,
@@ -198,8 +198,8 @@ fn test_settings_x2c_generates_claude_settings() {
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
 
     // Test SettingsHandler directly (detect targets config.toml, so call it directly)
-    use ccx::handlers::settings::SettingsHandler;
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::settings::SettingsHandler;
+    use cxbridge::handlers::Handler;
 
     let handler = SettingsHandler {
         map: maps["settings-config"].clone(),
@@ -212,7 +212,7 @@ fn test_settings_x2c_generates_claude_settings() {
         .lift(&parsed, ConvDir::X2c)
         .expect("lift should succeed");
 
-    assert_eq!(ir.kind, ccx::core::ir::Kind::Settings);
+    assert_eq!(ir.kind, cxbridge::core::ir::Kind::Settings);
     assert!(ir.fields.contains_key("settings.model"));
     assert!(ir.fields.contains_key("settings.effortLevel"));
     assert!(ir.fields.contains_key("settings.editorMode"));
@@ -271,7 +271,7 @@ fn test_developer_instructions_produces_claude_md() {
     );
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let kind = ccx::core::detect::detect(fixture_path).expect("detect should succeed");
+    let kind = cxbridge::core::detect::detect(fixture_path).expect("detect should succeed");
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
         .parse(Path::new(fixture_path))
@@ -317,7 +317,7 @@ fn test_developer_instructions_degrade_diagnostic_present() {
     let fixture_path = "tests/fixtures/codex/developer_instructions/config.toml";
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let kind = ccx::core::detect::detect(fixture_path).expect("detect should succeed");
+    let kind = cxbridge::core::detect::detect(fixture_path).expect("detect should succeed");
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
         .parse(Path::new(fixture_path))
@@ -369,7 +369,7 @@ fn test_no_developer_instructions_no_claude_md_from_settings() {
     let fixture_path = "tests/fixtures/codex/config.toml";
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let kind = ccx::core::detect::detect(fixture_path).expect("detect should succeed");
+    let kind = cxbridge::core::detect::detect(fixture_path).expect("detect should succeed");
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
         .parse(Path::new(fixture_path))

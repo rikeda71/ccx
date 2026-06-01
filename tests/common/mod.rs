@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use ccx::handlers::{EmitPlan, LowerOpts, Scope, SkillTargetMode};
+use cxbridge::handlers::{EmitPlan, LowerOpts, Scope, SkillTargetMode};
 
 /// Path to the mappings directory, relative to the workspace root.
 /// Appears in 18 test files.
@@ -70,15 +70,15 @@ pub fn empty_plan() -> EmitPlan {
     }
 }
 
-/// Returns the path to the debug build of the `ccx` binary.
+/// Returns the path to the debug build of the `cxbridge` binary.
 ///
 /// Used by cli_dir_input.rs, check_direction.rs, and report_flag.rs.
-pub fn ccx_bin() -> std::path::PathBuf {
+pub fn cxbridge_bin() -> std::path::PathBuf {
     // Use the debug build produced by `cargo build`.
     let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push("target");
     p.push("debug");
-    p.push("ccx");
+    p.push("cxbridge");
     p
 }
 

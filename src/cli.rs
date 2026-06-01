@@ -14,7 +14,7 @@ const MAPPINGS_DIR: &str = "mappings";
 
 #[derive(Parser)]
 #[command(
-    name = "ccx",
+    name = "cxbridge",
     about = "Claude Code ⇄ Codex config file bidirectional conversion CLI"
 )]
 pub struct Cli {

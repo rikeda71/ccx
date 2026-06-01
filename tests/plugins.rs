@@ -3,14 +3,14 @@ use common::*;
 
 use std::path::Path;
 
-use ccx::core::{
+use cxbridge::core::{
     detect::detect,
     ir::{DiagLevel, Kind},
     mappings::load_mappings,
     report::build_report,
     transforms::ConvDir,
 };
-use ccx::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
+use cxbridge::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
 
 /// plugin.json c2x: .codex-plugin/plugin.json is generated.
 #[test]
@@ -24,7 +24,7 @@ fn test_plugin_c2x_generates_codex_manifest() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(plugin_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Plugin);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Plugin);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -34,7 +34,7 @@ fn test_plugin_c2x_generates_codex_manifest() {
         .lift(&parsed, ConvDir::C2x)
         .expect("lift should succeed");
 
-    assert_eq!(ir.kind, ccx::core::ir::Kind::Plugin);
+    assert_eq!(ir.kind, cxbridge::core::ir::Kind::Plugin);
     // name and description should be lossless
     assert!(
         ir.fields.contains_key("plugins.name"),
@@ -42,21 +42,21 @@ fn test_plugin_c2x_generates_codex_manifest() {
     );
     assert_eq!(
         ir.fields["plugins.name"].loss,
-        ccx::core::ir::Loss::Lossless
+        cxbridge::core::ir::Loss::Lossless
     );
 
     // lspServers and userConfig should be dropped
     let has_lsp_dropped = ir
         .fields
         .get("plugins.lspServers")
-        .map(|f| matches!(f.loss, ccx::core::ir::Loss::Dropped))
+        .map(|f| matches!(f.loss, cxbridge::core::ir::Loss::Dropped))
         .unwrap_or(false);
     assert!(has_lsp_dropped, "lspServers should be dropped");
 
     let has_user_config_dropped = ir
         .fields
         .get("plugins.userConfig")
-        .map(|f| matches!(f.loss, ccx::core::ir::Loss::Dropped))
+        .map(|f| matches!(f.loss, cxbridge::core::ir::Loss::Dropped))
         .unwrap_or(false);
     assert!(has_user_config_dropped, "userConfig should be dropped");
 
@@ -100,7 +100,7 @@ fn test_plugin_c2x_recursion() {
     let skill_children: Vec<_> = ir
         .children
         .iter()
-        .filter(|c| c.kind == ccx::core::ir::Kind::Skill)
+        .filter(|c| c.kind == cxbridge::core::ir::Kind::Skill)
         .collect();
     assert!(
         !skill_children.is_empty(),
@@ -110,7 +110,7 @@ fn test_plugin_c2x_recursion() {
     let mcp_children: Vec<_> = ir
         .children
         .iter()
-        .filter(|c| c.kind == ccx::core::ir::Kind::Mcp)
+        .filter(|c| c.kind == cxbridge::core::ir::Kind::Mcp)
         .collect();
     assert!(
         !mcp_children.is_empty(),
@@ -153,7 +153,8 @@ fn test_plugin_c2x_dropped_classification() {
 
     // A userConfig warn must be emitted (unresolved-variable risk)
     let has_user_config_warn = ir.diagnostics.iter().any(|d| {
-        d.id.as_deref() == Some("plugins.userConfig") && d.level == ccx::core::ir::DiagLevel::Warn
+        d.id.as_deref() == Some("plugins.userConfig")
+            && d.level == cxbridge::core::ir::DiagLevel::Warn
     });
     assert!(
         has_user_config_warn,
@@ -286,7 +287,7 @@ fn test_plugin_x2c_interface_fields_expanded() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(plugin_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Plugin);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Plugin);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -303,7 +304,7 @@ fn test_plugin_x2c_interface_fields_expanded() {
         .expect("plugins.interface.websiteURL must be present in IR");
     assert_eq!(
         website_url.loss,
-        ccx::core::ir::Loss::Lossy,
+        cxbridge::core::ir::Loss::Lossy,
         "plugins.interface.websiteURL must be Lossy"
     );
     assert_eq!(
@@ -330,7 +331,7 @@ fn test_plugin_x2c_interface_fields_expanded() {
         .expect("plugins.interface.brandColor must be present in IR");
     assert_eq!(
         brand_color.loss,
-        ccx::core::ir::Loss::Dropped,
+        cxbridge::core::ir::Loss::Dropped,
         "plugins.interface.brandColor must be Dropped"
     );
 

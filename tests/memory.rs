@@ -3,11 +3,11 @@ use common::*;
 
 use std::path::Path;
 
-use ccx::core::{
+use cxbridge::core::{
     detect::detect, mappings::load_mappings, report::build_report, transforms::ConvDir,
 };
-use ccx::handlers::memory::MemoryHandler;
-use ccx::handlers::{pick_handler, Handler};
+use cxbridge::handlers::memory::MemoryHandler;
+use cxbridge::handlers::{pick_handler, Handler};
 
 fn make_handler() -> MemoryHandler {
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
@@ -29,7 +29,7 @@ fn test_memory_c2x_basic() {
     let out_dir = tempfile::TempDir::new().unwrap();
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(memory_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Memory);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Memory);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -39,7 +39,7 @@ fn test_memory_c2x_basic() {
         .lift(&parsed, ConvDir::C2x)
         .expect("lift should succeed");
 
-    assert_eq!(ir.kind, ccx::core::ir::Kind::Memory);
+    assert_eq!(ir.kind, cxbridge::core::ir::Kind::Memory);
 
     let opts = default_lower_opts_subagent(out_dir.path().to_str().unwrap());
     let plan = handler
@@ -68,7 +68,7 @@ fn test_memory_x2c_basic() {
     let out_dir = tempfile::TempDir::new().unwrap();
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(memory_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Memory);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Memory);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler

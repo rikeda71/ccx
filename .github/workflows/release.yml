@@ -15,7 +15,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BIN_NAME: ccx
+  BIN_NAME: cxbridge
 
 jobs:
   check-version:
@@ -116,3 +116,23 @@ jobs:
           files: |
             ${{ env.BIN_NAME }}-*.tar.gz
             ${{ env.BIN_NAME }}-*.zip
+
+  publish-crate:
+    name: publish-crate
+    needs: [check-version, build, release]
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Publishes to crates.io only when CARGO_REGISTRY_TOKEN is configured;
+      # otherwise the step is a no-op so the release still succeeds.
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "CARGO_REGISTRY_TOKEN is not set; skipping crates.io publish."
+            exit 0
+          fi
+          cargo publish --locked

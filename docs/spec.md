@@ -1,6 +1,6 @@
-# ccx — Design & Implementation Specification
+# cxbridge — Design & Implementation Specification
 
-> **Status: Implemented.** This document is the single source of truth for the `ccx` CLI design and implementation. It supersedes docs/01 through docs/13 in cases of conflict. Field-level detail is summarized here; precise, machine-readable values are deferred to `mappings/*.yaml`.
+> **Status: Implemented.** This document is the single source of truth for the `cxbridge` CLI design and implementation. It supersedes docs/01 through docs/13 in cases of conflict. Field-level detail is summarized here; precise, machine-readable values are deferred to `mappings/*.yaml`.
 >
 > Codex-side specification is fluid (2025–2026). Where `awaiting-codex` is noted, the relevant `mappings/*.yaml` entry carries a `notes: "status: awaiting-codex"` annotation.
 
@@ -40,7 +40,7 @@
 
 ## 1. Project Goal & Scope
 
-**ccx** is a Rust CLI that bidirectionally converts configuration files between Claude Code (`.claude/`, JSON) and OpenAI Codex CLI (`.codex/`, TOML). It covers Skills, Plugins, Hooks, MCP servers, Memory files, Subagents, and Settings.
+**cxbridge** is a Rust CLI that bidirectionally converts configuration files between Claude Code (`.claude/`, JSON) and OpenAI Codex CLI (`.codex/`, TOML). It covers Skills, Plugins, Hooks, MCP servers, Memory files, Subagents, and Settings.
 
 Conversion rules are declared in `mappings/*.yaml` (304 entries). The CLI is an engine that interprets those declarations. New field support requires only YAML edits, not code changes (mappings-driven design).
 
@@ -155,7 +155,7 @@ Key design principles:
 **Project layout:**
 
 ```
-ccx/
+cxbridge/
 ├── Cargo.toml
 ├── mappings/           # ← YAML truth tables (304 entries)
 │   ├── SCHEMA.md
@@ -458,7 +458,7 @@ const CLAUDE_LATEST: &[(Tier, &str)] = &[
 
 ### Version Detection (`min_version` / `max_version`)
 
-`ccx` detects the target tool version at conversion time and checks it against the `min_version` and `max_version` fields on each mappings entry. This allows the same `mappings/*.yaml` to work correctly across multiple versions of Claude Code or Codex CLI — entries that require a minimum version are silently skipped (with a diagnostic) when converting for an older target, and entries marked `max_version` are excluded for newer targets. An implementer must support reading these optional fields from `MapEntry` and skipping entries that fall outside the detected version range.
+`cxbridge` detects the target tool version at conversion time and checks it against the `min_version` and `max_version` fields on each mappings entry. This allows the same `mappings/*.yaml` to work correctly across multiple versions of Claude Code or Codex CLI — entries that require a minimum version are silently skipped (with a diagnostic) when converting for an older target, and entries marked `max_version` are excluded for newer targets. An implementer must support reading these optional fields from `MapEntry` and skipping entries that fall outside the detected version range.
 
 ### Pipeline Direction Type
 
@@ -844,7 +844,7 @@ pub struct Report {
 ### Report Format (human-readable)
 
 ```
-$ ccx c2x ./skills/deploy --report
+$ cxbridge c2x ./skills/deploy --report
 ✔ skills/deploy/SKILL.md → .agents/skills/deploy/SKILL.md
   ◎ name, description                         lossless
   ○ when_to_use → description(concatenated)   lossy
@@ -875,9 +875,9 @@ Summary: 2 lossless, 3 lossy (2 degraded), 2 dropped, 1 body-warning
 ### Commands
 
 ```
-ccx c2x <path> [options]    # Claude → Codex (one-way)
-ccx x2c <path> [options]    # Codex → Claude (one-way)
-ccx check <path>            # Pre-conversion diagnosis (dropped count estimate, no writes)
+cxbridge c2x <path> [options]    # Claude → Codex (one-way)
+cxbridge x2c <path> [options]    # Codex → Claude (one-way)
+cxbridge check <path>            # Pre-conversion diagnosis (dropped count estimate, no writes)
 ```
 
 `<path>` accepts a file or directory (recursive detection).
@@ -1043,7 +1043,7 @@ Claude uses description semantic matching for automatic subagent dispatch. Codex
 
 `.claude-plugin/marketplace.json` is read by Codex as a "legacy-compatible marketplace." However, `.claude-plugin/plugin.json` is **not** natively interpreted by Codex — only `.codex-plugin/plugin.json` is. Use `--dual-manifest` (or create both manually) to be recognized by both tools.
 
-`codex-plugin-cc` is a one-way bridge (Codex → Claude Code), not a compatibility layer. Do not conflate it with ccx.
+`codex-plugin-cc` is a one-way bridge (Codex → Claude Code), not a compatibility layer. Do not conflate it with cxbridge.
 
 ---
 

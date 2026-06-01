@@ -3,10 +3,10 @@ use common::*;
 
 use std::path::Path;
 
-use ccx::core::{
+use cxbridge::core::{
     detect::detect, ir::Kind, mappings::load_mappings, report::build_report, transforms::ConvDir,
 };
-use ccx::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
+use cxbridge::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
 
 /// Convert .mcp.json via c2x and verify that basic conversion works correctly.
 #[test]
@@ -20,7 +20,7 @@ fn test_mcp_c2x_basic() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(mcp_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Mcp);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Mcp);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -133,7 +133,7 @@ fn test_mcp_x2c_from_codex_config() {
     let kind = detect(config_path).expect("detect should succeed");
     assert_eq!(
         kind,
-        ccx::core::ir::Kind::Mcp,
+        cxbridge::core::ir::Kind::Mcp,
         "config.toml with mcp_servers should be Kind::Mcp"
     );
 
@@ -261,7 +261,7 @@ fn test_mcp_c2x_oauth_fields_in_ir() {
     );
     assert_eq!(
         client_id.loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "mcp.oauth.client_id must be lossless"
     );
 
@@ -272,7 +272,7 @@ fn test_mcp_c2x_oauth_fields_in_ir() {
         .expect("Expected mcp.oauth.scopes in IR");
     assert_eq!(
         scopes.loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "mcp.oauth.scopes must be lossless"
     );
     let scopes_arr = scopes
@@ -379,7 +379,7 @@ fn test_mcp_x2c_oauth_fields_in_ir() {
     );
     assert_eq!(
         client_id.loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "mcp.oauth.client_id must be lossless in x2c"
     );
 
@@ -390,7 +390,7 @@ fn test_mcp_x2c_oauth_fields_in_ir() {
         .expect("Expected mcp.oauth.scopes in x2c IR");
     assert_eq!(
         scopes.loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "mcp.oauth.scopes must be lossless in x2c"
     );
     assert_eq!(
@@ -479,11 +479,11 @@ fn test_mcp_c2x_env_http_headers_bare_var_name_in_ir() {
     });
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::mcp::McpHandler {
+    let handler = cxbridge::handlers::mcp::McpHandler {
         map: maps["mcp"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&mcp_json, ConvDir::C2x).unwrap();
 
     let server = ir.children.iter().find(|c| c.source_path == "s").unwrap();
@@ -572,11 +572,11 @@ fn test_mcp_c2x_env_to_env_http_headers_bare_var_name() {
     });
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::mcp::McpHandler {
+    let handler = cxbridge::handlers::mcp::McpHandler {
         map: maps["mcp"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&mcp_json, ConvDir::C2x).unwrap();
 
     let server = ir
@@ -625,11 +625,11 @@ fn test_mcp_x2c_env_http_headers_becomes_dollar_brace_in_headers() {
 
     let out_dir = tempfile::TempDir::new().unwrap();
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::mcp::McpHandler {
+    let handler = cxbridge::handlers::mcp::McpHandler {
         map: maps["mcp"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&parsed, ConvDir::X2c).expect("lift ok");
 
     let server = ir
@@ -779,11 +779,11 @@ fn test_mcp_c2x_env_http_headers_merged_when_both_headers_and_env() {
     });
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::mcp::McpHandler {
+    let handler = cxbridge::handlers::mcp::McpHandler {
         map: maps["mcp"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&mcp_json, ConvDir::C2x).unwrap();
     let server = ir.children.iter().find(|c| c.source_path == "s").unwrap();
 
@@ -838,11 +838,11 @@ fn test_mcp_c2x_env_http_headers_merged_in_output() {
 
     let out_dir = tempfile::TempDir::new().unwrap();
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::mcp::McpHandler {
+    let handler = cxbridge::handlers::mcp::McpHandler {
         map: maps["mcp"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&mcp_json, ConvDir::C2x).unwrap();
 
     let opts = LowerOpts {
@@ -919,11 +919,11 @@ fn test_mcp_c2x_bearer_auth_remaining_var_headers_routed_to_env_http_headers() {
     });
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::mcp::McpHandler {
+    let handler = cxbridge::handlers::mcp::McpHandler {
         map: maps["mcp"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&mcp_json, ConvDir::C2x).unwrap();
     let server = ir.children.iter().find(|c| c.source_path == "s").unwrap();
 
@@ -984,7 +984,7 @@ fn test_mcp_c2x_bearer_auth_remaining_var_headers_routed_to_env_http_headers() {
     let has_static_warn = server
         .diagnostics
         .iter()
-        .any(|d| d.level == ccx::core::ir::DiagLevel::Warn && d.message.contains("X-Static"));
+        .any(|d| d.level == cxbridge::core::ir::DiagLevel::Warn && d.message.contains("X-Static"));
     assert!(
         has_static_warn,
         "Expected a Warn diagnostic for literal-value header X-Static alongside Bearer auth, got: {:?}",
@@ -1016,11 +1016,11 @@ fn test_mcp_c2x_bearer_auth_remaining_var_headers_in_output() {
 
     let out_dir = tempfile::TempDir::new().unwrap();
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::mcp::McpHandler {
+    let handler = cxbridge::handlers::mcp::McpHandler {
         map: maps["mcp"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&mcp_json, ConvDir::C2x).unwrap();
 
     let opts = LowerOpts {
@@ -1108,7 +1108,7 @@ fn test_disabled_server_ir_has_no_disabled_sentinel_field() {
 
     // The disabled state must be recorded as a Drop diagnostic with id "mcp.enabled".
     let has_enabled_diag = child.diagnostics.iter().any(|d| {
-        d.id.as_deref() == Some("mcp.enabled") && d.level == ccx::core::ir::DiagLevel::Drop
+        d.id.as_deref() == Some("mcp.enabled") && d.level == cxbridge::core::ir::DiagLevel::Drop
     });
     assert!(
         has_enabled_diag,
