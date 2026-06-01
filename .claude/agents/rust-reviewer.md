@@ -1,9 +1,9 @@
 ---
 name: rust-reviewer
 description: >
-  Reviews src/*.rs files against docs/spec.md and Rust best practices.
-  Checks type/flow alignment with docs/spec.md, leftover todo!() stubs, clippy findings, error handling,
-  and whether mappings semantics have been altered in code.
+  Reviews src/*.rs files against docs/spec.md, Effective Rust idioms, and Rust best practices.
+  Checks type/flow alignment with docs/spec.md, Effective Rust idioms (.claude/rules/effective-rust.md),
+  leftover todo!() stubs, clippy findings, error handling, and whether mappings semantics have been altered in code.
   Use when asked to "review Rust", "review src", or "rust review".
 tools:
   - Read
@@ -55,6 +55,27 @@ Check that no `todo!()` remains in already-implemented phases (M0, M1, etc.). `t
 - Verify that `direction` matching (`applies_direction`) is not skipped.
 - Verify that `run_degrade` is called only when `degrade` is truthy (no conflation with special cases like `disable-model-invocation`).
 
+### 5b. Effective Rust idiom check
+
+Apply the heuristics in `.claude/rules/effective-rust.md`. Flag, in particular:
+
+- **Primitive obsession**: a `bool`/integer/stringly-typed value where an `enum`
+  or **newtype** would make illegal states unrepresentable.
+- **Missing std trait impls**: conversions that should be `From`/`TryFrom`
+  (then `.into()`), user-facing formatting that should be `Display`, types that
+  should derive `Default`/`Clone`/`Eq`, or hand-rolled iteration that should be
+  an `Iterator` impl / iterator adapter.
+- **API shape**: public functions taking owned `String`/`Vec<T>` they only read
+  (should borrow `&str`/`&[T]`); long positional constructors that want a
+  builder or `Default` + struct-update.
+- **Needless allocation/cloning**: `clone()`/`to_string()` only to satisfy the
+  borrow checker; `collect()` into a `Vec` that is iterated once.
+- **Panics on runtime paths**: `unwrap`/`expect`/`panic!` outside startup
+  invariant asserts and tests; missing `#[must_use]` where ignoring the result
+  is a bug.
+- **`unsafe`**: any `unsafe` block (this crate should have none) lacking a
+  documented soundness invariant.
+
 ### 6. Reporting review findings
 
 Report findings under the following categories:
@@ -63,4 +84,5 @@ Report findings under the following categories:
 - **Unimplemented (action required)**: Where `todo!()` remains for stubs that should be filled in the current phase.
 - **Error handling deficiency**: Leftover `unwrap` / `expect`, or implementations that cannot continue execution.
 - **Mappings semantic deviation**: Where the handling of transform, degrade, or direction differs from the YAML declaration.
+- **Effective Rust idiom**: Primitive obsession, missing std-trait impls, owned-arg APIs that should borrow, needless allocation, runtime panics, or `unsafe` lacking a soundness note (per `.claude/rules/effective-rust.md`).
 - **Clippy findings**: Code quality issues detected by clippy.
