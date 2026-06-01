@@ -8,7 +8,7 @@ use crate::core::ir::{
     Loss, SideArtifact, Tool,
 };
 use crate::core::mappings::{
-    applies_direction, index_by_claude_field, index_by_codex_field, DomainMap, LossSpec,
+    applies_direction, index_by_claude_field, index_by_codex_field, DomainMap,
 };
 use crate::core::transforms::{apply_transforms, ConvDir, TransformCtx};
 use crate::degrade::rules::degrade_allowed_tools;
@@ -76,11 +76,7 @@ impl Handler for SkillsHandler {
             };
             let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
 
-            let loss = match entry.loss {
-                LossSpec::Lossless => Loss::Lossless,
-                LossSpec::Lossy => Loss::Lossy,
-                LossSpec::Dropped => Loss::Dropped,
-            };
+            let loss = Loss::from(&entry.loss);
 
             let degrade_info = entry.degrade.as_ref().map(|d| DegradeInfo {
                 to: d.to.clone(),
@@ -324,7 +320,7 @@ impl SkillsHandler {
 
         // allowed-tools → degrade
         if let Some(f) = ir.fields.get("skills.allowed-tools") {
-            let tools = json_to_string_list(&f.value);
+            let tools = crate::handlers::json_to_string_list(&f.value);
             let (arts, diags) = degrade_allowed_tools(&skill_name, &tools, true, opts.scope);
             side_artifacts.extend(arts);
             diagnostics.extend(diags);
@@ -332,7 +328,7 @@ impl SkillsHandler {
 
         // disallowed-tools → degrade
         if let Some(f) = ir.fields.get("skills.disallowed-tools") {
-            let tools = json_to_string_list(&f.value);
+            let tools = crate::handlers::json_to_string_list(&f.value);
             let (arts, diags) = degrade_allowed_tools(&skill_name, &tools, false, opts.scope);
             side_artifacts.extend(arts);
             diagnostics.extend(diags);
@@ -354,10 +350,6 @@ impl SkillsHandler {
         // because invert(true)==false means allow_implicit_invocation=false in openai.yaml
         if let Some(f) = ir.fields.get("skills.disable-model-invocation") {
             if f.value == Value::Bool(false) {
-                let openai_yaml_path = format!(
-                    "{}/.agents/skills/{}/agents/openai.yaml",
-                    out_root, skill_name
-                );
                 let content = "policy:\n  allow_implicit_invocation: false\n".to_string();
                 side_artifacts.push(SideArtifact {
                     path: format!(".agents/skills/{}/agents/openai.yaml", skill_name),
@@ -365,7 +357,6 @@ impl SkillsHandler {
                     note: "disable-model-invocation=true → policy.allow_implicit_invocation: false"
                         .to_string(),
                 });
-                let _ = openai_yaml_path;
             }
         }
 
@@ -393,16 +384,7 @@ impl SkillsHandler {
         }
 
         // 本文
-        let body_raw = ir.body.as_ref().map(|b| b.raw.as_str()).unwrap_or("");
-        let body_out = if opts.rewrite_body {
-            if let Some(body_seg) = &ir.body {
-                rewrite_body(body_raw, &body_seg.findings)
-            } else {
-                body_raw.to_string()
-            }
-        } else {
-            body_raw.to_string()
-        };
+        let body_out = compute_body_out(ir, opts);
 
         // When requested, retain the original Claude-specific frontmatter keys so
         // that Codex can ignore them via fail-open while they remain readable.
@@ -492,8 +474,6 @@ impl SkillsHandler {
         let skill_name = extract_skill_name(&ir.source_path);
         let out_root = opts.out.as_deref().unwrap_or(".");
 
-        let idx = index_by_codex_field(&self.map);
-
         let mut fm = serde_json::Map::new();
 
         // Codex フィールド → Claude フィールドへ変換
@@ -520,19 +500,9 @@ impl SkillsHandler {
             }
             fm.insert(cf.to_string(), value.value.clone());
         }
-        let _ = idx;
 
         // 本文
-        let body_raw = ir.body.as_ref().map(|b| b.raw.as_str()).unwrap_or("");
-        let body_out = if opts.rewrite_body {
-            if let Some(body_seg) = &ir.body {
-                rewrite_body(body_raw, &body_seg.findings)
-            } else {
-                body_raw.to_string()
-            }
-        } else {
-            body_raw.to_string()
-        };
+        let body_out = compute_body_out(ir, opts);
 
         // interface.default_prompt → prepend to body (lossy approximate)
         let body_out = if let Some(dp_field) = ir.fields.get("skills.openai-yaml.default_prompt") {
@@ -651,6 +621,20 @@ fn collect_aux_files_recursive(
     Ok(())
 }
 
+/// Compute the output body text for a skill, optionally rewriting syntax.
+fn compute_body_out(ir: &IRNode, opts: &LowerOpts) -> String {
+    let body_raw = ir.body.as_ref().map(|b| b.raw.as_str()).unwrap_or("");
+    if opts.rewrite_body {
+        if let Some(body_seg) = &ir.body {
+            rewrite_body(body_raw, &body_seg.findings)
+        } else {
+            body_raw.to_string()
+        }
+    } else {
+        body_raw.to_string()
+    }
+}
+
 /// source_path からスキル名を抽出するヘルパ。
 /// .claude/skills/<name>/SKILL.md → <name>
 /// .agents/skills/<name>/SKILL.md → <name>
@@ -680,20 +664,6 @@ fn load_openai_yaml(source_path: &str) -> Option<Value> {
     }
     let content = std::fs::read_to_string(&openai_yaml).ok()?;
     serde_saphyr::from_str(&content).ok()
-}
-
-/// JSON Value を文字列のリストに変換するヘルパ。
-/// Value::String → [string]
-/// Value::Array → 各要素の as_str()
-fn json_to_string_list(v: &Value) -> Vec<String> {
-    match v {
-        Value::String(s) => vec![s.clone()],
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|x| x.as_str().map(|s| s.to_string()))
-            .collect(),
-        _ => vec![],
-    }
 }
 
 #[cfg(test)]

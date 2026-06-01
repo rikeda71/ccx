@@ -137,7 +137,7 @@ pub fn default_out_dir(path: &str, kind: &Kind) -> String {
         _ => {
             // Project root or any other directory input → .codex-converted inside it.
             // Use the path as-is (whether a dir or a file's parent).
-            if file_name.contains('.') && p.extension().is_some() {
+            if p.extension().is_some() {
                 // Looks like a file path — use its parent directory.
                 let parent = p.parent().unwrap_or(Path::new("."));
                 format!("{}/.codex-converted", parent.display())
@@ -220,13 +220,8 @@ fn run_convert(dir: ConvDir, path: &str, opts: &ConvertOpts) -> anyhow::Result<(
         write_plan(&combined_plan, opts.force)?;
     }
 
-    let exit_code = if opts.strict && total_dropped > 0 {
-        2
-    } else {
-        0
-    };
-    if exit_code != 0 {
-        std::process::exit(exit_code);
+    if opts.strict && total_dropped > 0 {
+        std::process::exit(2);
     }
     Ok(())
 }

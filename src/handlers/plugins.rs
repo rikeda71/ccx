@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use crate::core::ir::{
     new_node, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind, Loss, SideArtifact, Tool,
 };
-use crate::core::mappings::{applies_direction, DomainMap, LossSpec};
+use crate::core::mappings::{applies_direction, DomainMap};
 use crate::core::transforms::{apply_transforms, ConvDir, TransformCtx};
 use crate::handlers::{EmitFile, EmitPlan, Handler, LowerOpts};
 
@@ -192,11 +192,7 @@ impl PluginsHandler {
         };
         let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
 
-        let loss = match entry.loss {
-            LossSpec::Lossless => Loss::Lossless,
-            LossSpec::Lossy => Loss::Lossy,
-            LossSpec::Dropped => Loss::Dropped,
-        };
+        let loss = Loss::from(&entry.loss);
 
         let dropped_info = if matches!(loss, Loss::Dropped) {
             Some(DroppedInfo {

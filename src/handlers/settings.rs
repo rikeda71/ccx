@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::core::ir::{
     new_node, DegradeInfo, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind, Loss, Tool,
 };
-use crate::core::mappings::{applies_direction, DomainMap, LossSpec};
+use crate::core::mappings::{applies_direction, DomainMap};
 use crate::core::transforms::{apply_transforms, ConvDir, TransformCtx};
 use crate::degrade::rules::degrade_allowed_tools;
 use crate::handlers::{EmitFile, EmitPlan, Handler, LowerOpts};
@@ -53,7 +53,7 @@ impl Handler for SettingsHandler {
             let toml_val: toml::Value = content
                 .parse()
                 .with_context(|| format!("Failed to parse config.toml: {}", path.display()))?;
-            let json_val = toml_to_json(&toml_val)?;
+            let json_val = crate::core::serialize::toml_to_json(&toml_val)?;
 
             Ok(serde_json::json!({
                 "frontmatter": json_val,
@@ -464,11 +464,7 @@ impl SettingsHandler {
                 };
                 let (transformed, applied) = apply_transforms(v, entry.transform.as_deref(), &ctx);
 
-                let loss = match entry.loss {
-                    LossSpec::Lossless => Loss::Lossless,
-                    LossSpec::Lossy => Loss::Lossy,
-                    LossSpec::Dropped => Loss::Dropped,
-                };
+                let loss = Loss::from(&entry.loss);
 
                 let warning = if entry.warn == Some(true) {
                     Some(format!(
@@ -516,11 +512,7 @@ impl SettingsHandler {
                 field: entry,
             };
             let (transformed, applied) = apply_transforms(&value, entry.transform.as_deref(), &ctx);
-            let loss = match entry.loss {
-                LossSpec::Lossless => Loss::Lossless,
-                LossSpec::Lossy => Loss::Lossy,
-                LossSpec::Dropped => Loss::Dropped,
-            };
+            let loss = Loss::from(&entry.loss);
             let warning = if entry.warn == Some(true) {
                 Some(format!(
                     "{}: {}",
@@ -720,22 +712,22 @@ impl SettingsHandler {
         // sandbox.filesystem.* → [permissions.default].filesystem
         let mut fs_perms: Vec<(String, &str)> = Vec::new();
         if let Some(f) = ir.fields.get("settings.sandbox.filesystem.allowWrite") {
-            for path in json_to_string_list(&f.value) {
+            for path in crate::handlers::json_to_string_list(&f.value) {
                 fs_perms.push((path, "write"));
             }
         }
         if let Some(f) = ir.fields.get("settings.sandbox.filesystem.denyWrite") {
-            for path in json_to_string_list(&f.value) {
+            for path in crate::handlers::json_to_string_list(&f.value) {
                 fs_perms.push((path, "deny"));
             }
         }
         if let Some(f) = ir.fields.get("settings.sandbox.filesystem.allowRead") {
-            for path in json_to_string_list(&f.value) {
+            for path in crate::handlers::json_to_string_list(&f.value) {
                 fs_perms.push((path, "read"));
             }
         }
         if let Some(f) = ir.fields.get("settings.sandbox.filesystem.denyRead") {
-            for path in json_to_string_list(&f.value) {
+            for path in crate::handlers::json_to_string_list(&f.value) {
                 fs_perms.push((path, "deny"));
             }
         }
@@ -743,7 +735,7 @@ impl SettingsHandler {
         // sandbox.network.allowedDomains → [permissions.default].network.domains
         let mut network_domains: Vec<String> = Vec::new();
         if let Some(f) = ir.fields.get("settings.sandbox.network.allowedDomains") {
-            network_domains = json_to_string_list(&f.value);
+            network_domains = crate::handlers::json_to_string_list(&f.value);
         }
 
         // permissions.deny WebFetch domains → [permissions.default].network.domains (deny)
@@ -751,7 +743,7 @@ impl SettingsHandler {
 
         // permissions.allow/deny/ask → split by tool type
         if let Some(f) = ir.fields.get("__permissions.allow") {
-            let tools = json_to_string_list(&f.value);
+            let tools = crate::handlers::json_to_string_list(&f.value);
             let (bash_tools, fs_allow_read, fs_allow_write, web_domains) =
                 split_permissions_by_type(&tools);
 
@@ -784,7 +776,7 @@ impl SettingsHandler {
         }
 
         if let Some(f) = ir.fields.get("__permissions.deny") {
-            let tools = json_to_string_list(&f.value);
+            let tools = crate::handlers::json_to_string_list(&f.value);
             let (bash_tools, fs_deny_read, fs_deny_write, web_deny_domains) =
                 split_permissions_by_type(&tools);
 
@@ -824,7 +816,7 @@ impl SettingsHandler {
         }
 
         if let Some(f) = ir.fields.get("__permissions.ask") {
-            let tools = json_to_string_list(&f.value);
+            let tools = crate::handlers::json_to_string_list(&f.value);
             let (bash_tools, _, _, _) = split_permissions_by_type(&tools);
             if !bash_tools.is_empty() {
                 // ask → prompt decision in .rules
@@ -1119,42 +1111,6 @@ fn map_default_mode(mode: &str) -> (Option<&'static str>, Option<&'static str>) 
         "auto" => (Some("on-request"), None),
         "plan" => (None, None), // dropped; handled separately
         _ => (None, None),
-    }
-}
-
-/// Convert toml::Value to serde_json::Value.
-fn toml_to_json(v: &toml::Value) -> anyhow::Result<Value> {
-    match v {
-        toml::Value::String(s) => Ok(Value::String(s.clone())),
-        toml::Value::Integer(i) => Ok(Value::Number(serde_json::Number::from(*i))),
-        toml::Value::Float(f) => Ok(Value::Number(
-            serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)),
-        )),
-        toml::Value::Boolean(b) => Ok(Value::Bool(*b)),
-        toml::Value::Array(arr) => {
-            let items: anyhow::Result<Vec<Value>> = arr.iter().map(toml_to_json).collect();
-            Ok(Value::Array(items?))
-        }
-        toml::Value::Table(tbl) => {
-            let mut map = serde_json::Map::new();
-            for (k, val) in tbl {
-                map.insert(k.clone(), toml_to_json(val)?);
-            }
-            Ok(Value::Object(map))
-        }
-        toml::Value::Datetime(dt) => Ok(Value::String(dt.to_string())),
-    }
-}
-
-/// Convert a JSON Value to a list of strings.
-fn json_to_string_list(v: &Value) -> Vec<String> {
-    match v {
-        Value::String(s) => vec![s.clone()],
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|x| x.as_str().map(|s| s.to_string()))
-            .collect(),
-        _ => vec![],
     }
 }
 

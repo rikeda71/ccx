@@ -7,7 +7,7 @@ use crate::core::ir::{
     new_node, DegradeInfo, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind, Loss, Tool,
 };
 use crate::core::mappings::{
-    applies_direction, index_by_claude_field, index_by_codex_field, DomainMap, LossSpec,
+    applies_direction, index_by_claude_field, index_by_codex_field, DomainMap,
 };
 use crate::core::transforms::{apply_transforms, ConvDir, TransformCtx};
 use crate::handlers::{EmitFile, EmitPlan, Handler, LowerOpts};
@@ -222,11 +222,7 @@ impl McpHandler {
                         let (v, applied) =
                             apply_transforms(value, entry.transform.as_deref(), &ctx);
 
-                        let loss = match entry.loss {
-                            LossSpec::Lossless => Loss::Lossless,
-                            LossSpec::Lossy => Loss::Lossy,
-                            LossSpec::Dropped => Loss::Dropped,
-                        };
+                        let loss = Loss::from(&entry.loss);
                         let degrade_info = entry.degrade.as_ref().map(|d| DegradeInfo {
                             to: d.to.clone(),
                             target: d.target.clone(),
@@ -462,11 +458,7 @@ impl McpHandler {
                 };
                 let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
 
-                let loss = match entry.loss {
-                    LossSpec::Lossless => Loss::Lossless,
-                    LossSpec::Lossy => Loss::Lossy,
-                    LossSpec::Dropped => Loss::Dropped,
-                };
+                let loss = Loss::from(&entry.loss);
                 let degrade_info = entry.degrade.as_ref().map(|d| DegradeInfo {
                     to: d.to.clone(),
                     target: d.target.clone(),
@@ -540,11 +532,7 @@ impl McpHandler {
                 };
                 let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
 
-                let loss = match entry.loss {
-                    LossSpec::Lossless => Loss::Lossless,
-                    LossSpec::Lossy => Loss::Lossy,
-                    LossSpec::Dropped => Loss::Dropped,
-                };
+                let loss = Loss::from(&entry.loss);
                 let dropped_info = if matches!(loss, Loss::Dropped) {
                     Some(DroppedInfo {
                         reason: entry
@@ -831,11 +819,7 @@ impl McpHandler {
                         let (v, applied) =
                             apply_transforms(value, entry.transform.as_deref(), &ctx);
 
-                        let loss = match entry.loss {
-                            LossSpec::Lossless => Loss::Lossless,
-                            LossSpec::Lossy => Loss::Lossy,
-                            LossSpec::Dropped => Loss::Dropped,
-                        };
+                        let loss = Loss::from(&entry.loss);
                         let dropped_info = if matches!(loss, Loss::Dropped) {
                             Some(DroppedInfo {
                                 reason: entry
@@ -887,7 +871,7 @@ impl McpHandler {
     /// Claude .mcp.json を生成（c2x 方向）
     fn lower_c2x(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
         let mut files = Vec::new();
-        let mut diagnostics = Vec::new();
+        let diagnostics = Vec::new();
 
         let out_root = opts.out.as_deref().unwrap_or(".");
         let output_path = format!("{}/.mcp.json", out_root);
@@ -896,7 +880,7 @@ impl McpHandler {
 
         for child in &ir.children {
             let server_name = child.source_path.clone();
-            let server_cfg = self.build_codex_server_cfg(child, &mut diagnostics)?;
+            let server_cfg = self.build_codex_server_cfg(child)?;
             mcp_servers.insert(server_name, server_cfg);
         }
 
@@ -916,7 +900,7 @@ impl McpHandler {
     /// x2c: Codex config.toml の [mcp_servers.*] → Claude .mcp.json
     fn lower_x2c(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
         let mut files = Vec::new();
-        let mut diagnostics = Vec::new();
+        let diagnostics = Vec::new();
 
         let out_root = opts.out.as_deref().unwrap_or(".");
 
@@ -935,7 +919,7 @@ impl McpHandler {
             }
 
             let server_name = child.source_path.clone();
-            let server_cfg = self.build_claude_server_cfg(child, &mut diagnostics)?;
+            let server_cfg = self.build_claude_server_cfg(child)?;
             mcp_servers_map.insert(server_name, server_cfg);
         }
 
@@ -953,11 +937,7 @@ impl McpHandler {
     }
 
     /// IRNode(child) から Codex MCP サーバー設定を構築する（c2x）
-    fn build_codex_server_cfg(
-        &self,
-        child: &IRNode,
-        _diagnostics: &mut Vec<Diagnostic>,
-    ) -> anyhow::Result<Value> {
+    fn build_codex_server_cfg(&self, child: &IRNode) -> anyhow::Result<Value> {
         let mut cfg: Map<String, Value> = Map::new();
 
         for (id, field) in &child.fields {
@@ -1059,11 +1039,7 @@ impl McpHandler {
     }
 
     /// IRNode(child) から Claude MCP サーバー設定を構築する（x2c）
-    fn build_claude_server_cfg(
-        &self,
-        child: &IRNode,
-        _diagnostics: &mut Vec<Diagnostic>,
-    ) -> anyhow::Result<Value> {
+    fn build_claude_server_cfg(&self, child: &IRNode) -> anyhow::Result<Value> {
         let mut cfg: Map<String, Value> = Map::new();
 
         // transport_type → type フィールド
@@ -1174,34 +1150,13 @@ fn parse_toml_mcp_config(path: &Path) -> anyhow::Result<Value> {
         .with_context(|| format!("Failed to parse TOML: {}", path.display()))?;
 
     // TOML Value → JSON Value の変換
-    let json_val = toml_to_json(&toml_val);
+    let json_val = crate::core::serialize::toml_to_json(&toml_val)?;
 
     Ok(serde_json::json!({
         "frontmatter": json_val,
         "body": "",
         "path": abs_path.to_str().unwrap_or("")
     }))
-}
-
-/// toml::Value → serde_json::Value の変換ヘルパ。
-fn toml_to_json(v: &toml::Value) -> Value {
-    match v {
-        toml::Value::String(s) => Value::String(s.clone()),
-        toml::Value::Integer(i) => Value::Number(serde_json::Number::from(*i)),
-        toml::Value::Float(f) => {
-            Value::Number(serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)))
-        }
-        toml::Value::Boolean(b) => Value::Bool(*b),
-        toml::Value::Array(arr) => Value::Array(arr.iter().map(toml_to_json).collect()),
-        toml::Value::Table(tbl) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in tbl {
-                map.insert(k.clone(), toml_to_json(v));
-            }
-            Value::Object(map)
-        }
-        toml::Value::Datetime(dt) => Value::String(dt.to_string()),
-    }
 }
 
 /// "Bearer ${VAR}" から VAR を抽出するヘルパ。

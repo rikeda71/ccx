@@ -3,6 +3,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::core::ir::Loss;
 use crate::core::transforms::ConvDir;
 
 /// mappings YAML の1エントリ。
@@ -48,6 +49,16 @@ pub enum LossSpec {
     Lossless,
     Lossy,
     Dropped,
+}
+
+impl From<&LossSpec> for Loss {
+    fn from(spec: &LossSpec) -> Self {
+        match spec {
+            LossSpec::Lossless => Loss::Lossless,
+            LossSpec::Lossy => Loss::Lossy,
+            LossSpec::Dropped => Loss::Dropped,
+        }
+    }
 }
 
 /// 降格仕様。

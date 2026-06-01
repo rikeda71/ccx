@@ -7,7 +7,7 @@ use crate::core::ir::{
     new_node, DegradeInfo, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind, Loss, Tool,
 };
 use crate::core::mappings::{
-    applies_direction, index_by_claude_field, index_by_codex_field, DomainMap, LossSpec,
+    applies_direction, index_by_claude_field, index_by_codex_field, DomainMap,
 };
 use crate::core::transforms::{
     apply_transforms, claude_tier, tier_to_codex, ConvDir, TransformCtx,
@@ -117,11 +117,7 @@ impl Handler for SubagentHandler {
             };
             let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
 
-            let loss = match entry.loss {
-                LossSpec::Lossless => Loss::Lossless,
-                LossSpec::Lossy => Loss::Lossy,
-                LossSpec::Dropped => Loss::Dropped,
-            };
+            let loss = Loss::from(&entry.loss);
 
             let degrade_info = entry.degrade.as_ref().map(|d| DegradeInfo {
                 to: d.to.clone(),
@@ -286,7 +282,7 @@ impl SubagentHandler {
 
         // tools → sandbox_mode (approximate; lossy)
         if let Some(f) = ir.fields.get("subagents.tools") {
-            let tools = json_to_string_list(&f.value);
+            let tools = crate::handlers::json_to_string_list(&f.value);
             let sandbox_mode = approximate_sandbox_mode(&tools);
             if let Some(mode) = sandbox_mode {
                 toml_lines.push(format!(r#"sandbox_mode = "{}""#, mode));
@@ -332,7 +328,7 @@ impl SubagentHandler {
 
         // skills → skills.config (lossy)
         if let Some(f) = ir.fields.get("subagents.skills") {
-            let skills = json_to_string_list(&f.value);
+            let skills = crate::handlers::json_to_string_list(&f.value);
             if !skills.is_empty() {
                 // Codex skills.config is an array of objects with {enabled, path}
                 // We approximate by just writing enabled=true entries
@@ -533,7 +529,7 @@ fn parse_codex_agent_toml(path: &Path) -> anyhow::Result<Value> {
     let abs_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
     // Convert toml::Value to serde_json::Value for the frontmatter
-    let json_val = toml_value_to_json(&toml_val)?;
+    let json_val = crate::core::serialize::toml_to_json(&toml_val)?;
 
     // The TOML agent file has a flat structure; all top-level keys go into "frontmatter"
     // and developer_instructions becomes the "body"
@@ -561,30 +557,6 @@ fn parse_codex_agent_toml(path: &Path) -> anyhow::Result<Value> {
         "body": body,
         "path": abs_path.to_str().unwrap_or("")
     }))
-}
-
-/// Convert toml::Value to serde_json::Value.
-fn toml_value_to_json(v: &toml::Value) -> anyhow::Result<Value> {
-    match v {
-        toml::Value::String(s) => Ok(Value::String(s.clone())),
-        toml::Value::Integer(i) => Ok(Value::Number(serde_json::Number::from(*i))),
-        toml::Value::Float(f) => Ok(Value::Number(
-            serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)),
-        )),
-        toml::Value::Boolean(b) => Ok(Value::Bool(*b)),
-        toml::Value::Array(arr) => {
-            let items: anyhow::Result<Vec<Value>> = arr.iter().map(toml_value_to_json).collect();
-            Ok(Value::Array(items?))
-        }
-        toml::Value::Table(tbl) => {
-            let mut map = serde_json::Map::new();
-            for (k, val) in tbl {
-                map.insert(k.clone(), toml_value_to_json(val)?);
-            }
-            Ok(Value::Object(map))
-        }
-        toml::Value::Datetime(dt) => Ok(Value::String(dt.to_string())),
-    }
 }
 
 /// Extract agent name from path.
@@ -652,18 +624,6 @@ fn approximate_sandbox_mode(tools: &[String]) -> Option<&'static str> {
         Some("read-only")
     } else {
         None
-    }
-}
-
-/// Convert a JSON Value to a list of strings.
-fn json_to_string_list(v: &Value) -> Vec<String> {
-    match v {
-        Value::String(s) => vec![s.clone()],
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|x| x.as_str().map(|s| s.to_string()))
-            .collect(),
-        _ => vec![],
     }
 }
 

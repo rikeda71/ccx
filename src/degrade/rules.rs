@@ -22,6 +22,11 @@ pub fn degrade_allowed_tools(
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
 
     let decision = if is_allow { "allow" } else { "forbidden" };
+    let tool_kind_id = if is_allow {
+        "allowed-tools"
+    } else {
+        "disallowed-tools"
+    };
 
     let bash_tools: Vec<&str> = tools
         .iter()
@@ -77,24 +82,10 @@ pub fn degrade_allowed_tools(
         });
         diagnostics.push(Diagnostic {
             level: DiagLevel::Warn,
-            id: Some(format!(
-                "skills.{}",
-                if is_allow {
-                    "allowed-tools"
-                } else {
-                    "disallowed-tools"
-                }
-            )),
+            id: Some(format!("skills.{}", tool_kind_id)),
             message: format!(
                 "Bash tools in {} degraded to {} (scope: {}). Generated: {}",
-                if is_allow {
-                    "allowed-tools"
-                } else {
-                    "disallowed-tools"
-                },
-                rules_path,
-                scope_label,
-                decision
+                tool_kind_id, rules_path, scope_label, decision
             ),
         });
     }
@@ -166,11 +157,6 @@ pub fn degrade_allowed_tools(
             ),
         });
 
-        let tool_kind_id = if is_allow {
-            "allowed-tools"
-        } else {
-            "disallowed-tools"
-        };
         for glob in &write_tools {
             diagnostics.push(Diagnostic {
                 level: DiagLevel::Warn,
@@ -195,11 +181,6 @@ pub fn degrade_allowed_tools(
 
     let has_web_fetch = tools.iter().any(|t| t == "WebFetch");
     if has_web_fetch {
-        let tool_kind_id = if is_allow {
-            "allowed-tools"
-        } else {
-            "disallowed-tools"
-        };
         // allow → grant network; disallow → deny it. Never grant on a deny.
         let net_value = if is_allow { "true" } else { "false" };
         let content = format!("[permissions.{}]\nnetwork = {}\n", skill_name, net_value);
@@ -223,11 +204,6 @@ pub fn degrade_allowed_tools(
 
     let has_web_search = tools.iter().any(|t| t == "WebSearch");
     if has_web_search {
-        let tool_kind_id = if is_allow {
-            "allowed-tools"
-        } else {
-            "disallowed-tools"
-        };
         // allow → enable web search; disallow → disable it. Never enable on a deny.
         let ws_value = if is_allow { "true" } else { "false" };
         artifacts.push(SideArtifact {
@@ -261,14 +237,7 @@ pub fn degrade_allowed_tools(
                 };
                 diagnostics.push(Diagnostic {
                     level: DiagLevel::Warn,
-                    id: Some(format!(
-                        "skills.{}",
-                        if is_allow {
-                            "allowed-tools"
-                        } else {
-                            "disallowed-tools"
-                        }
-                    )),
+                    id: Some(format!("skills.{}", tool_kind_id)),
                     message: format!(
                         "mcp tool '{}' degraded to [mcp_servers.{}].{} = ['{}'] (manual: add to config.toml)",
                         t, server, list_name, tool
@@ -278,14 +247,7 @@ pub fn degrade_allowed_tools(
                 // Pattern does not match mcp__<server>__<tool>; flag for manual review.
                 diagnostics.push(Diagnostic {
                     level: DiagLevel::Warn,
-                    id: Some(format!(
-                        "skills.{}",
-                        if is_allow {
-                            "allowed-tools"
-                        } else {
-                            "disallowed-tools"
-                        }
-                    )),
+                    id: Some(format!("skills.{}", tool_kind_id)),
                     message: format!(
                         "mcp tool '{}' does not match mcp__<server>__<tool> pattern; manual review required",
                         t
@@ -317,14 +279,7 @@ pub fn degrade_allowed_tools(
     for builtin in builtin_tools {
         diagnostics.push(Diagnostic {
             level: DiagLevel::Drop,
-            id: Some(format!(
-                "skills.{}",
-                if is_allow {
-                    "allowed-tools"
-                } else {
-                    "disallowed-tools"
-                }
-            )),
+            id: Some(format!("skills.{}", tool_kind_id)),
             message: format!(
                 "Built-in tool '{}' has no Codex equivalent and will be dropped",
                 builtin

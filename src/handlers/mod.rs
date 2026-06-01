@@ -107,6 +107,20 @@ pub trait Handler {
     ) -> anyhow::Result<EmitPlan>;
 }
 
+/// JSON Value を文字列のリストに変換するヘルパ。
+///
+/// `Value::String` → `[string]`、`Value::Array` → 各要素の文字列、それ以外 → `[]`。
+pub(crate) fn json_to_string_list(v: &Value) -> Vec<String> {
+    match v {
+        Value::String(s) => vec![s.clone()],
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+            .collect(),
+        _ => vec![],
+    }
+}
+
 /// Kind と全 domain map を受け取り、対応するハンドラをボックス化して返す。
 pub fn pick_handler(kind: &Kind, maps: &HashMap<String, DomainMap>) -> Box<dyn Handler> {
     match kind {
