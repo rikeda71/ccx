@@ -1,99 +1,68 @@
-# cxbridge — Claude Code ⇄ Codex config converter
+# cxbridge
 
 [![CI](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/cxbridge.svg)](https://crates.io/crates/cxbridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[日本語版 README](README.ja.md)
+**[日本語版 README はこちら](README.ja.md)**
 
-Move your agent setup between [Claude Code](https://code.claude.com/docs) and the
-[OpenAI Codex CLI](https://developers.openai.com/codex) — without redoing it by hand,
-and without silently losing settings.
+Bidirectional config converter between [Claude Code](https://code.claude.com/docs) (`.claude/`, JSON) and the [OpenAI Codex CLI](https://developers.openai.com/codex) (`.codex/`, TOML).
 
-```
-Claude Code  .claude/ (JSON)   ⇄   Codex CLI  .codex/ (TOML)
-```
+Convert skills, hooks, MCP servers, memory, subagents, plugins, and settings in either direction — and get a report of exactly what converted, what was reshaped, and what had no equivalent. Nothing is ever dropped silently.
 
-## Why cxbridge?
-
-If you use both Claude Code and Codex, your two setups drift apart. You've built up
-skills, hooks, MCP servers, memory files, and subagents on one side and want them on
-the other — but the two tools use different directory layouts, different file formats
-(JSON vs TOML), and different feature sets.
-
-cxbridge translates between them in either direction. The hard part isn't copying files;
-it's knowing what *doesn't* translate cleanly. So every run prints a **conversion
-report** that tells you exactly what came across losslessly, what was reshaped, what
-got moved to a broader scope, and what had no equivalent and was dropped. **Nothing is
-ever lost silently.**
-
-The translation rules aren't hardcoded — they live in `mappings/*.yaml` (304 entries
-across 8 domains). The CLI is just an engine that interprets them.
-
-## At a glance
-
-```sh
+```text
 $ cxbridge c2x .claude/skills/deploy/SKILL.md
 
 ✔ skills/deploy/SKILL.md → .agents/skills/deploy/SKILL.md
   ◎ name, description                          lossless
   ○ when_to_use → description(concatenated)    lossy
   △ allowed-tools → .codex/rules/deploy.rules  lossy (degrade: skill→project)
-  △ model: opus→gpt-5.x, effort: max→xhigh     lossy (degrade: skill→subagent)
   ✕ user-invocable                             dropped (no Codex equivalent)
-  ✕ paths                                      dropped
   ⚠ body L42: !`git diff` not executed in Codex (literal residue risk)
-  + generated: .codex/rules/deploy.rules, .codex/agents/deploy.toml
-Summary: 2 lossless, 3 lossy (2 degraded), 2 dropped, 1 body-warning
+Summary: 2 lossless, 2 lossy (1 degraded), 1 dropped, 1 body-warning
 ```
 
-## What it converts
+## Keep Claude Code and Codex in sync
 
-| Domain | Examples |
-|---|---|
-| **Skills** | `SKILL.md` frontmatter, `allowed-tools`, model/effort, body scan |
-| **Plugins** | plugin manifests, bundled `commands/` and `agents/` directories |
-| **Hooks** | event hooks, matchers, command hooks |
-| **MCP servers** | `.mcp.json` ⇄ Codex `[mcp_servers]` |
-| **Memory** | `CLAUDE.md` / `AGENTS.md` and memory settings |
-| **Subagents** | agent definitions and model tiers |
-| **Settings / Config** | `settings.json` ⇄ `config.toml` |
-| **Variables** | `${CLAUDE_*}` placeholders and Codex equivalents |
+If you use both tools, you build up skills, hooks, and MCP servers on one side and want them on the other. cxbridge moves them across instead of making you redo the work by hand — and tells you where the two tools genuinely disagree.
 
-## Install
+```bash
+# Bring a Claude skill into Codex
+cxbridge c2x .claude/skills/deploy/SKILL.md
 
-**Prerequisites:** Rust 1.80+ (stable `cargo`).
+# Pull a Codex config back into Claude
+cxbridge x2c .codex/config.toml
 
-```sh
-git clone https://github.com/rikeda71/cxbridge
-cd cxbridge
-cargo build --release
-cp target/release/cxbridge ~/.local/bin/   # or anywhere on your PATH
+# See what would convert, before writing anything
+cxbridge check .claude/
 ```
-
-Pre-built binaries are published on the [Releases](https://github.com/rikeda71/cxbridge/releases) page.
 
 ## Usage
 
-```sh
-cxbridge c2x <path>    # Claude → Codex
-cxbridge x2c <path>    # Codex → Claude
-cxbridge check <path>  # Diagnose convertibility without writing anything
+```
+cxbridge <c2x|x2c|check> <path> [options]
 ```
 
-`<path>` can be a single file or a directory (detected recursively).
+```bash
+cxbridge c2x <path>    # Claude → Codex
+cxbridge x2c <path>    # Codex → Claude
+cxbridge check <path>  # Diagnose convertibility (no writes)
 
-```sh
-# Convert one Claude skill to Codex format
+cxbridge --version     # Print version
+cxbridge --help        # Show help
+```
+
+`<path>` is a file or a directory (scanned recursively).
+
+```bash
+# Convert one skill
 cxbridge c2x .claude/skills/deploy/SKILL.md
 
 # Preview a Codex → Claude conversion without touching disk
 cxbridge x2c .codex/config.toml --dry-run --report
 
-# Diagnose an MCP config before converting
-cxbridge check .mcp.json
-
-# Fail the build if anything would be dropped (good for CI)
-cxbridge c2x .claude/skills/deploy/SKILL.md --strict
+# Fail if anything would be dropped (use as a CI gate)
+cxbridge c2x .claude/ --strict
 
 # Machine-readable JSON report
 cxbridge c2x .mcp.json --dry-run --report=json
@@ -112,38 +81,88 @@ cxbridge c2x .mcp.json --dry-run --report=json
 | `--rewrite-body` | false | Apply body substitutions (default: detect + warn only) |
 | `--dual-manifest` | false | Keep `.claude-plugin/` and also generate `.codex-plugin/` |
 | `--hooks-target <user\|project>` | `user` | Hooks write destination |
-| `--report[=json]` | none | Emit detailed report (`=json` for machine-readable output) |
+| `--report[=json]` | none | Emit a detailed report (`=json` for machine-readable output) |
 | `--dry-run` | false | Report only, no file writes |
-| `--strict` | false | Exit 2 if any fields were dropped (for CI) |
+| `--strict` | false | Exit 2 if any fields were dropped |
 | `--keep-claude-frontmatter` | false | Retain Claude-specific frontmatter keys in Codex output |
 | `--force` | false | Allow overwriting existing files |
 
 </details>
 
-## Reading the report
+## Installation
 
-Every run ends with a one-line summary; with `--report` you also get the per-field
-detail shown above. Each line is tagged with one symbol:
+### Homebrew (macOS / Linux)
+
+```bash
+brew install rikeda71/tap/cxbridge
+```
+
+### curl (GitHub Releases)
+
+```bash
+# macOS (Apple Silicon)
+curl -fsSL https://github.com/rikeda71/cxbridge/releases/latest/download/cxbridge-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv cxbridge /usr/local/bin/
+
+# macOS (Intel)
+curl -fsSL https://github.com/rikeda71/cxbridge/releases/latest/download/cxbridge-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv cxbridge /usr/local/bin/
+
+# Linux (x86_64)
+curl -fsSL https://github.com/rikeda71/cxbridge/releases/latest/download/cxbridge-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv cxbridge /usr/local/bin/
+```
+
+A statically linked `…-x86_64-unknown-linux-musl.tar.gz` and a Windows `…-x86_64-pc-windows-msvc.zip` are attached to each [release](https://github.com/rikeda71/cxbridge/releases) as well.
+
+### Cargo
+
+```bash
+cargo install cxbridge
+```
+
+### From source
+
+```bash
+git clone https://github.com/rikeda71/cxbridge.git
+cd cxbridge
+cargo install --path .
+```
+
+## What it converts
+
+| Domain | Examples |
+|---|---|
+| **Skills** | `SKILL.md` frontmatter, `allowed-tools`, model/effort, body scan |
+| **Plugins** | plugin manifests, bundled `commands/` and `agents/` directories |
+| **Hooks** | event hooks, matchers, command hooks |
+| **MCP servers** | `.mcp.json` ⇄ Codex `[mcp_servers]` |
+| **Memory** | `CLAUDE.md` ⇄ `AGENTS.md` and memory settings |
+| **Subagents** | agent definitions and model tiers |
+| **Settings / Config** | `settings.json` ⇄ `config.toml` |
+| **Variables** | `${CLAUDE_*}` placeholders and Codex equivalents |
+
+For a per-domain breakdown of what converts cleanly, what is reshaped, and what is dropped, see **[docs/conversion-coverage.md](docs/conversion-coverage.md)**.
+
+## The conversion report
+
+Every run ends with a one-line summary; with `--report` you also get the per-field detail shown at the top. Each line is tagged with one symbol:
 
 | Symbol | Meaning |
 |---|---|
 | ◎ | **Lossless** — fully equivalent on the other side |
 | ○ | **Lossy** — meaning preserved, but some information is reduced |
 | △ | **Degraded** — moved to a broader scope (e.g. skill → project), which is named |
-| ✕ | **Dropped** — no conversion target; discarded (and reported) |
+| ✕ | **Dropped** — no conversion target; discarded (and always reported) |
 | ⚠ | **Body warning** — a construct in the body needs manual review |
 
-`--strict` turns any dropped field into a non-zero exit (code 2), so you can wire cxbridge
-into CI and refuse conversions that would quietly lose data.
+`--strict` turns any dropped field into a non-zero exit (code 2), so you can refuse conversions that would quietly lose data in CI.
 
 ## Documentation
 
-- **[docs/spec.md](docs/spec.md)** — the full design & implementation spec: IR model,
-  transform registry, domain handler contracts, degrade engine, CLI flags, exit codes,
-  and testing strategy.
-- **[mappings/](mappings/)** — the canonical conversion table (304 entries across
-  `skills`, `hooks`, `mcp`, `plugins`, `memory`, `subagents`, `settings-config`, and
-  `variables`). The schema is documented in [mappings/SCHEMA.md](mappings/SCHEMA.md).
+- **[docs/conversion-coverage.md](docs/conversion-coverage.md)** — what converts, what degrades, and what is dropped, per domain.
+- **[docs/spec.md](docs/spec.md)** — full design & implementation spec (IR model, transform registry, degrade engine, CLI flags, exit codes).
+- **[mappings/](mappings/)** — the canonical conversion table (304 entries across 8 domains); schema in [mappings/SCHEMA.md](mappings/SCHEMA.md).
 
 ## License
 

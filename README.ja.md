@@ -1,96 +1,68 @@
-# cxbridge — Claude Code ⇄ Codex 設定変換 CLI
+# cxbridge
 
 [![CI](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/cxbridge.svg)](https://crates.io/crates/cxbridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[English README](README.md)
+**[English README here](README.md)**
 
-[Claude Code](https://code.claude.com/docs) と [OpenAI Codex CLI](https://developers.openai.com/codex)
-のエージェント設定を、手作業でやり直すことなく、そして設定を黙って失うことなく、双方向に移行します。
+[Claude Code](https://code.claude.com/docs)（`.claude/`、JSON）と [OpenAI Codex CLI](https://developers.openai.com/codex)（`.codex/`、TOML）の設定を双方向に変換する CLI です。
 
-```
-Claude Code  .claude/ (JSON)   ⇄   Codex CLI  .codex/ (TOML)
-```
+skills / hooks / MCP サーバー / memory / subagents / plugins / settings をどちらの向きにも変換し、「何が完全に移せて、何が形を変え、何が移せなかったか」をレポートで示します。サイレントな損失は起こしません。
 
-## なぜ cxbridge か
-
-Claude Code と Codex を両方使っていると、2 つの設定はだんだん食い違っていきます。片方で
-skills・hooks・MCP サーバー・メモリファイル・subagents を作り込んだあと、それをもう片方でも
-使いたい。しかし両者はディレクトリ構成もファイル形式（JSON / TOML）も対応機能も異なります。
-
-cxbridge は両者をどちらの向きにも変換します。難しいのはファイルをコピーすることではなく、「何が
-きれいには変換できないか」を把握することです。そこで実行のたびに **conversion report** を出力し、
-完全等価で移せたもの・形を変えて移したもの・より広いスコープへ移したもの・対応先がなく破棄した
-ものを正確に示します。**サイレントな損失は決して起こしません。**
-
-変換ルールはハードコードされておらず `mappings/*.yaml`（8 ドメイン・304 エントリ）に宣言されています。
-CLI はそれを解釈するエンジンに過ぎません。
-
-## ひと目で
-
-```sh
+```text
 $ cxbridge c2x .claude/skills/deploy/SKILL.md
 
 ✔ skills/deploy/SKILL.md → .agents/skills/deploy/SKILL.md
   ◎ name, description                          lossless
   ○ when_to_use → description(concatenated)    lossy
   △ allowed-tools → .codex/rules/deploy.rules  lossy (degrade: skill→project)
-  △ model: opus→gpt-5.x, effort: max→xhigh     lossy (degrade: skill→subagent)
   ✕ user-invocable                             dropped (no Codex equivalent)
-  ✕ paths                                      dropped
   ⚠ body L42: !`git diff` not executed in Codex (literal residue risk)
-  + generated: .codex/rules/deploy.rules, .codex/agents/deploy.toml
-Summary: 2 lossless, 3 lossy (2 degraded), 2 dropped, 1 body-warning
+Summary: 2 lossless, 2 lossy (1 degraded), 1 dropped, 1 body-warning
 ```
 
-## 変換対象
+## Claude Code と Codex の設定を揃える
 
-| ドメイン | 例 |
-|---|---|
-| **Skills** | `SKILL.md` frontmatter、`allowed-tools`、model/effort、本文スキャン |
-| **Plugins** | plugin マニフェスト、同梱の `commands/`・`agents/` ディレクトリ |
-| **Hooks** | イベント hook、matcher、command hook |
-| **MCP サーバー** | `.mcp.json` ⇄ Codex `[mcp_servers]` |
-| **Memory** | `CLAUDE.md` / `AGENTS.md` とメモリ設定 |
-| **Subagents** | エージェント定義とモデル tier |
-| **Settings / Config** | `settings.json` ⇄ `config.toml` |
-| **Variables** | `${CLAUDE_*}` プレースホルダと Codex の対応物 |
+両方のツールを使っていると、片方で作り込んだ skills・hooks・MCP サーバーをもう片方でも使いたくなります。cxbridge は手作業でやり直す代わりにそれらを変換し、2 つのツールで本当に食い違う箇所を教えてくれます。
 
-## インストール
+```bash
+# Claude の skill を Codex に持っていく
+cxbridge c2x .claude/skills/deploy/SKILL.md
 
-**事前要件:** Rust 1.80 以上（stable の `cargo`）。
+# Codex の設定を Claude に戻す
+cxbridge x2c .codex/config.toml
 
-```sh
-git clone https://github.com/rikeda71/cxbridge
-cd cxbridge
-cargo build --release
-cp target/release/cxbridge ~/.local/bin/   # PATH の通った場所へ
+# 書き込む前に、何が変換されるか確認する
+cxbridge check .claude/
 ```
-
-ビルド済みバイナリは [Releases](https://github.com/rikeda71/cxbridge/releases) ページで配布しています。
 
 ## 使い方
 
-```sh
+```
+cxbridge <c2x|x2c|check> <path> [options]
+```
+
+```bash
 cxbridge c2x <path>    # Claude → Codex
 cxbridge x2c <path>    # Codex → Claude
 cxbridge check <path>  # 変換可能性を診断（書き込まない）
+
+cxbridge --version     # バージョン表示
+cxbridge --help        # ヘルプ表示
 ```
 
-`<path>` にはファイルまたはディレクトリ（再帰検出）を指定します。
+`<path>` にはファイルまたはディレクトリ（再帰スキャン）を指定します。
 
-```sh
-# Claude の skill を Codex 形式へ変換
+```bash
+# 1 つの skill を変換
 cxbridge c2x .claude/skills/deploy/SKILL.md
 
 # Codex → Claude をディスクに触れずプレビュー
 cxbridge x2c .codex/config.toml --dry-run --report
 
-# .mcp.json を変換前に診断
-cxbridge check .mcp.json
-
-# dropped が出たらビルドを失敗させる（CI 向け）
-cxbridge c2x .claude/skills/deploy/SKILL.md --strict
+# dropped が出たら失敗させる（CI ゲートとして）
+cxbridge c2x .claude/ --strict
 
 # 機械可読な JSON レポート
 cxbridge c2x .mcp.json --dry-run --report=json
@@ -111,16 +83,70 @@ cxbridge c2x .mcp.json --dry-run --report=json
 | `--hooks-target <user\|project>` | `user` | hooks の書き出し先 |
 | `--report[=json]` | なし | 詳細レポートを出力（`=json` で機械可読 JSON） |
 | `--dry-run` | false | 書き込まず report のみ出力 |
-| `--strict` | false | dropped が 1 件でもあれば exit 2（CI 用） |
+| `--strict` | false | dropped が 1 件でもあれば exit 2 |
 | `--keep-claude-frontmatter` | false | Claude 固有 frontmatter キーを Codex 出力に残置 |
 | `--force` | false | 既存ファイルへの上書きを許可 |
 
 </details>
 
-## レポートの読み方
+## インストール
 
-実行ごとに必ず 1 行サマリが出ます。`--report` を付けると上記のフィールド単位の詳細も得られます。
-各行には記号が 1 つ付きます:
+### Homebrew (macOS / Linux)
+
+```bash
+brew install rikeda71/tap/cxbridge
+```
+
+### curl (GitHub Releases)
+
+```bash
+# macOS (Apple Silicon)
+curl -fsSL https://github.com/rikeda71/cxbridge/releases/latest/download/cxbridge-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv cxbridge /usr/local/bin/
+
+# macOS (Intel)
+curl -fsSL https://github.com/rikeda71/cxbridge/releases/latest/download/cxbridge-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv cxbridge /usr/local/bin/
+
+# Linux (x86_64)
+curl -fsSL https://github.com/rikeda71/cxbridge/releases/latest/download/cxbridge-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv cxbridge /usr/local/bin/
+```
+
+静的リンクの `…-x86_64-unknown-linux-musl.tar.gz` と Windows 用 `…-x86_64-pc-windows-msvc.zip` も各 [release](https://github.com/rikeda71/cxbridge/releases) に添付されています。
+
+### Cargo
+
+```bash
+cargo install cxbridge
+```
+
+### ソースから
+
+```bash
+git clone https://github.com/rikeda71/cxbridge.git
+cd cxbridge
+cargo install --path .
+```
+
+## 変換対象
+
+| ドメイン | 例 |
+|---|---|
+| **Skills** | `SKILL.md` frontmatter、`allowed-tools`、model/effort、本文スキャン |
+| **Plugins** | plugin マニフェスト、同梱の `commands/`・`agents/` ディレクトリ |
+| **Hooks** | イベント hook、matcher、command hook |
+| **MCP サーバー** | `.mcp.json` ⇄ Codex `[mcp_servers]` |
+| **Memory** | `CLAUDE.md` ⇄ `AGENTS.md` とメモリ設定 |
+| **Subagents** | エージェント定義とモデル tier |
+| **Settings / Config** | `settings.json` ⇄ `config.toml` |
+| **Variables** | `${CLAUDE_*}` プレースホルダと Codex の対応物 |
+
+ドメインごとに「何がきれいに変換され、何が形を変え、何が dropped になるか」の詳細は **[docs/conversion-coverage.md](docs/conversion-coverage.md)** を参照してください。
+
+## conversion report の読み方
+
+実行ごとに必ず 1 行サマリが出ます。`--report` を付けると上記のフィールド単位の詳細も得られます。各行には記号が 1 つ付きます:
 
 | 記号 | 意味 |
 |---|---|
@@ -130,16 +156,13 @@ cxbridge c2x .mcp.json --dry-run --report=json
 | ✕ | **Dropped** — 変換先なしで破棄（必ず報告される） |
 | ⚠ | **Body warning** — 本文中の構文に手動確認が必要 |
 
-`--strict` を付けると dropped が 1 件でもあれば非ゼロ（exit code 2）で終了します。これにより、
-データを黙って失う変換を CI で拒否できます。
+`--strict` を付けると dropped が 1 件でもあれば非ゼロ（exit code 2）で終了するので、データを黙って失う変換を CI で拒否できます。
 
 ## ドキュメント
 
-- **[docs/spec.md](docs/spec.md)** — 設計・実装仕様の全文: IR モデル、transform レジストリ、
-  ドメインハンドラ仕様、降格エンジン、CLI フラグ、終了コード、テスト戦略。
-- **[mappings/](mappings/)** — 変換テーブルの正本データ（8 ドメイン・304 エントリ:
-  `skills` / `hooks` / `mcp` / `plugins` / `memory` / `subagents` / `settings-config` /
-  `variables`）。スキーマは [mappings/SCHEMA.md](mappings/SCHEMA.md) を参照。
+- **[docs/conversion-coverage.md](docs/conversion-coverage.md)** — ドメインごとの変換可否・degrade・dropped の一覧。
+- **[docs/spec.md](docs/spec.md)** — 設計・実装仕様の全文（IR モデル、transform レジストリ、degrade エンジン、CLI フラグ、終了コード）。
+- **[mappings/](mappings/)** — 変換テーブルの正本（8 ドメイン・304 エントリ）。スキーマは [mappings/SCHEMA.md](mappings/SCHEMA.md)。
 
 ## ライセンス
 
