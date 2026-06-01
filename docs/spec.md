@@ -641,8 +641,8 @@ The Plugins handler is the integration point. It coordinates skills/hooks/mcp ha
 - `interface.category` → lossy approximate → appended to `keywords` array
 - `interface.longDescription` → lossy approximate ↔ `description`
 
-**Lossless:** name, version, description, author/homepage/repository/license/keywords, displayName, skills path, marketplace core fields  
-**Lossy (c2x):** short-description, version strict-semver, mcpServers inline→file, hooks (event/type limits), commands, agents, defaultEnabled  
+**Lossless:** name, version, description, author/homepage/repository/license/keywords, displayName, marketplace core fields  
+**Lossy (c2x):** skills path (multi-path array cannot be fully represented in Codex manifest), short-description, version strict-semver, mcpServers inline→file, hooks (event/type limits), commands, agents, defaultEnabled  
 **Dropped (c2x):** see item 3 above (lspServers, outputStyles, experimental.themes, experimental.monitors, settings, channels, userConfig, dependencies)  
 **Dropped/lossy (x2c):** Codex `interface.*` fields as above
 
@@ -961,8 +961,8 @@ Total entries across all `mappings/*.yaml`: **287**
 
 | Loss level | Count | % |
 |---|---|---|
-| lossless | 71 | 25% |
-| lossy | 87 | 30% |
+| lossless | 70 | 24% |
+| lossy | 88 | 31% |
 | dropped | 129 | 45% |
 
 **Directional asymmetry:**
@@ -976,7 +976,7 @@ Total entries across all `mappings/*.yaml`: **287**
 | Skills | 22 | 5 | 12 | 5 | Core — degrade engine + body scanner |
 | Hooks | 83 | 34 | 6 | 43 | Core — JSON↔TOML structural conversion |
 | MCP | 30 | 10 | 4 | 16 | Lightweight mechanical transforms |
-| Plugins | 48 | 13 | 15 | 20 | Integration point; recursive |
+| Plugins | 48 | 12 | 16 | 20 | Integration point; recursive |
 | Memory | 16 | 3 | 5 | 8 | File rename + @import expansion |
 | Subagents | 25 | 4 | 10 | 11 | Large structural divergence |
 | Settings/Config | 49 | 2 (4%) | 30 | 17 | Hardest; permission axis mismatch |

@@ -54,7 +54,7 @@ impl Handler for SubagentHandler {
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let path_str = path.to_str().unwrap_or("");
 
-        if file_name.ends_with(".toml") && !file_name.ends_with("config.toml") {
+        if file_name.ends_with(".toml") && file_name != "config.toml" {
             // x2c: Codex TOML agent file
             parse_codex_agent_toml(path)
         } else if file_name.ends_with(".md")
@@ -166,17 +166,18 @@ impl Handler for SubagentHandler {
             findings: vec![],
         });
 
-        // Structural note: Claude auto-delegates via description; Codex requires
-        // explicit spawn_agent calls. This has no ir.fields counterpart so it
-        // belongs in ir.diagnostics (not duplicated in plan.diagnostics).
-        node.diagnostics.push(Diagnostic {
-            level: DiagLevel::Warn,
-            id: Some("subagents.spawn-model".to_string()),
-            message: "Claude auto-delegates via description match. \
-                      Codex requires explicit spawn_agent call (multi_agent=true). \
-                      Add spawn instructions to developer_instructions."
-                .to_string(),
-        });
+        // Only relevant when converting Claude → Codex: Claude auto-delegates via
+        // description match, but Codex requires explicit spawn_agent calls.
+        if matches!(dir, ConvDir::C2x) {
+            node.diagnostics.push(Diagnostic {
+                level: DiagLevel::Warn,
+                id: Some("subagents.spawn-model".to_string()),
+                message: "Claude auto-delegates via description match. \
+                          Codex requires explicit spawn_agent call (multi_agent=true). \
+                          Add spawn instructions to developer_instructions."
+                    .to_string(),
+            });
+        }
 
         Ok(node)
     }

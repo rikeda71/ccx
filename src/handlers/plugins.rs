@@ -131,6 +131,10 @@ impl PluginsHandler {
                         let full_key = format!("experimental.{}", sub_key);
                         self.lift_single_field(&full_key, sub_value, idx, dir, node);
                     }
+                } else {
+                    // Malformed experimental value (not an object): treat as an unknown field
+                    // so a dropped/unknown-field diagnostic is preserved.
+                    self.lift_single_field(key, value, idx, dir, node);
                 }
                 continue;
             }
@@ -143,6 +147,10 @@ impl PluginsHandler {
                         let full_key = format!("interface.{}", sub_key);
                         self.lift_single_field(&full_key, sub_value, idx, dir, node);
                     }
+                } else {
+                    // Malformed interface value (not an object): treat as an unknown field
+                    // so a dropped/unknown-field diagnostic is preserved.
+                    self.lift_single_field(key, value, idx, dir, node);
                 }
                 continue;
             }
@@ -257,10 +265,21 @@ impl PluginsHandler {
         // The `skills` manifest field is string|array.  Collect all paths.
         let skills_dirs: Vec<String> = match frontmatter.get("skills") {
             Some(Value::String(s)) => vec![s.clone()],
-            Some(Value::Array(arr)) => arr
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect(),
+            Some(Value::Array(arr)) => {
+                // Codex manifest `skills` is a single string, so a multi-path array
+                // cannot be fully represented — warn so the caller can resolve it.
+                node.diagnostics.push(Diagnostic {
+                    level: DiagLevel::Warn,
+                    id: Some("plugins.skills".to_string()),
+                    message: format!(
+                        "plugins.skills is an array with {} paths; all entries are converted as children but the Codex manifest `skills` field is a single string — only one path can be represented in the output manifest",
+                        arr.len()
+                    ),
+                });
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            }
             _ => vec!["./skills/".to_string()],
         };
 
@@ -325,22 +344,15 @@ impl PluginsHandler {
         dir: ConvDir,
         node: &mut IRNode,
     ) {
-        // Resolve the hooks path from the manifest's hooks field, or default to ./hooks/hooks.json
-        let hooks_path_str = frontmatter
-            .get("hooks")
-            .and_then(|v| v.as_str())
-            .unwrap_or("./hooks/hooks.json");
+        let maps = crate::core::mappings::load_mappings(Path::new("mappings"));
+        let hooks_handler = crate::handlers::hooks::HooksHandler {
+            map: maps["hooks"].clone(),
+        };
 
-        let hooks_rel = hooks_path_str.trim_start_matches("./");
-        let hooks_path = format!("{}/{}", plugin_root, hooks_rel);
-        let hooks_path = Path::new(&hooks_path);
+        let hooks_value = frontmatter.get("hooks");
 
-        if !hooks_path.exists() {
-            return;
-        }
-
-        // Warn only when hooks is an inline object
-        if let Some(hooks_obj) = frontmatter.get("hooks").and_then(|v| v.as_object()) {
+        // Inline object form: serialize and feed directly through the hooks handler.
+        if let Some(hooks_obj) = hooks_value.and_then(|v| v.as_object()) {
             node.diagnostics.push(Diagnostic {
                 level: DiagLevel::Warn,
                 id: Some("plugins.hooks".to_string()),
@@ -349,18 +361,46 @@ impl PluginsHandler {
                     hooks_obj.len()
                 ),
             });
+
+            // Build a synthetic parsed value as if it came from a hooks file.
+            // The hooks handler expects the top-level value to be the hooks object itself.
+            let synthetic = Value::Object(hooks_obj.clone());
+            match hooks_handler.lift(&synthetic, dir) {
+                Ok(mut child_ir) => {
+                    child_ir.diagnostics.push(Diagnostic {
+                        level: DiagLevel::Warn,
+                        id: Some("plugins.hooks".to_string()),
+                        message: "Plugin-bundled hooks may not be loaded by Codex (#16430). Use --hooks-target=user|project to output hooks to ~/.codex/hooks.json or .codex/config.toml instead.".to_string(),
+                    });
+                    node.children.push(child_ir);
+                }
+                Err(e) => {
+                    node.diagnostics.push(Diagnostic {
+                        level: DiagLevel::Warn,
+                        id: None,
+                        message: format!("Failed to lift inline hooks object: {}", e),
+                    });
+                }
+            }
+            return;
         }
 
-        let maps = crate::core::mappings::load_mappings(Path::new("mappings"));
-        let hooks_handler = crate::handlers::hooks::HooksHandler {
-            map: maps["hooks"].clone(),
-        };
+        // String reference form: resolve path and parse the file.
+        let hooks_path_str = hooks_value
+            .and_then(|v| v.as_str())
+            .unwrap_or("./hooks/hooks.json");
+
+        let hooks_rel = hooks_path_str.trim_start_matches("./");
+        let hooks_path_owned = format!("{}/{}", plugin_root, hooks_rel);
+        let hooks_path = Path::new(&hooks_path_owned);
+
+        if !hooks_path.exists() {
+            return;
+        }
 
         match hooks_handler.parse(hooks_path) {
             Ok(parsed) => match hooks_handler.lift(&parsed, dir) {
-                Ok(child_ir) => {
-                    // hooks #16430 warn: plugin-bundled hooks may not be loaded by Codex
-                    let mut child_ir = child_ir;
+                Ok(mut child_ir) => {
                     child_ir.diagnostics.push(Diagnostic {
                         level: DiagLevel::Warn,
                         id: Some("plugins.hooks".to_string()),
@@ -394,37 +434,52 @@ impl PluginsHandler {
         dir: ConvDir,
         node: &mut IRNode,
     ) {
-        // Resolve the MCP path from the manifest's mcpServers field, or default to ./.mcp.json
-        let mcp_path_str = frontmatter
-            .get("mcpServers")
-            .and_then(|v| v.as_str())
-            .unwrap_or("./.mcp.json");
+        let maps = crate::core::mappings::load_mappings(Path::new("mappings"));
+        let mcp_handler = crate::handlers::mcp::McpHandler {
+            map: maps["mcp"].clone(),
+        };
 
-        // Inline object form is lossy (only path references are supported)
-        if frontmatter
-            .get("mcpServers")
-            .map(|v| v.is_object())
-            .unwrap_or(false)
-        {
+        let mcp_value = frontmatter.get("mcpServers");
+
+        // Inline object form: serialize and feed directly through the MCP handler.
+        if let Some(mcp_obj) = mcp_value.and_then(|v| v.as_object()) {
             node.diagnostics.push(Diagnostic {
                 level: DiagLevel::Warn,
                 id: Some("plugins.mcpServers".to_string()),
                 message: "Inline mcpServers object in plugin.json: Codex requires a file path reference. Will attempt to emit as .mcp.json.".to_string(),
             });
+
+            // Wrap in the envelope that parse_json_file produces and lift_c2x/x2c expect.
+            let synthetic = serde_json::json!({
+                "frontmatter": { "mcpServers": mcp_obj },
+                "body": "",
+                "path": ""
+            });
+            match mcp_handler.lift(&synthetic, dir) {
+                Ok(child_ir) => {
+                    node.children.push(child_ir);
+                }
+                Err(e) => {
+                    node.diagnostics.push(Diagnostic {
+                        level: DiagLevel::Warn,
+                        id: None,
+                        message: format!("Failed to lift inline mcpServers object: {}", e),
+                    });
+                }
+            }
+            return;
         }
 
+        // String reference form: resolve path and parse the file.
+        let mcp_path_str = mcp_value.and_then(|v| v.as_str()).unwrap_or("./.mcp.json");
+
         let mcp_rel = mcp_path_str.trim_start_matches("./");
-        let mcp_path = format!("{}/{}", plugin_root, mcp_rel);
-        let mcp_path = Path::new(&mcp_path);
+        let mcp_path_owned = format!("{}/{}", plugin_root, mcp_rel);
+        let mcp_path = Path::new(&mcp_path_owned);
 
         if !mcp_path.exists() {
             return;
         }
-
-        let maps = crate::core::mappings::load_mappings(Path::new("mappings"));
-        let mcp_handler = crate::handlers::mcp::McpHandler {
-            map: maps["mcp"].clone(),
-        };
 
         match mcp_handler.parse(mcp_path) {
             Ok(parsed) => match mcp_handler.lift(&parsed, dir) {

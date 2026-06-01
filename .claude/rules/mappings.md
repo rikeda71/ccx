@@ -20,7 +20,7 @@ paths:
 Always run `scripts/validate-mappings.py` after editing to verify invariants.
 The Claude Code PostToolUse hook runs it automatically, but you can also run it manually:
 
-```
+```bash
 uv run scripts/validate-mappings.py
 ```
 

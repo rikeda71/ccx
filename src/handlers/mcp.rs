@@ -134,12 +134,8 @@ impl McpHandler {
                     let transport_type = value.as_str().unwrap_or("");
                     match transport_type {
                         "sse" => {
-                            child.diagnostics.push(Diagnostic {
-                                level: DiagLevel::Drop,
-                                id: Some("mcp.transport_sse".to_string()),
-                                message: "SSE transport not supported by Codex (dropped)"
-                                    .to_string(),
-                            });
+                            // Drop recorded via IRField.dropped; no separate diagnostic to
+                            // avoid double-counting in the report.
                             child.fields.insert(
                                 "mcp.transport_type".to_string(),
                                 IRField {
@@ -158,12 +154,8 @@ impl McpHandler {
                             );
                         }
                         "ws" => {
-                            child.diagnostics.push(Diagnostic {
-                                level: DiagLevel::Drop,
-                                id: Some("mcp.transport_ws".to_string()),
-                                message: "WebSocket transport not supported by Codex (dropped)"
-                                    .to_string(),
-                            });
+                            // Drop recorded via IRField.dropped; no separate diagnostic to
+                            // avoid double-counting in the report.
                             child.fields.insert(
                                 "mcp.transport_type".to_string(),
                                 IRField {

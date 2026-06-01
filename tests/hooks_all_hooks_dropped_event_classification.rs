@@ -120,4 +120,21 @@ fn test_event_with_surviving_hook_remains_lossless() {
         Loss::Lossless,
         "hooks.event.Stop must remain Loss::Lossless when command hooks survive"
     );
+
+    let out_dir = tempfile::TempDir::new().unwrap();
+    let opts = default_lower_opts(out_dir.path().to_str().unwrap());
+    let plan = handler
+        .lower(&ir, ConvDir::C2x, &opts)
+        .expect("lower should succeed");
+
+    let report = build_report(&ir, &plan);
+
+    // The surviving event must appear in report.lossless
+    let in_lossless = report.lossless.iter().any(|id| id == "hooks.event.Stop");
+    assert!(
+        in_lossless,
+        "hooks.event.Stop must appear in report.lossless when command hooks survive; \
+         lossless={:?}",
+        report.lossless
+    );
 }

@@ -407,9 +407,12 @@ fn process_hook_entries_c2x(event_name: &str, entries: &Value, node: &mut IRNode
                     .iter()
                     .filter_map(|h| process_single_hook_c2x(h, event_name, node))
                     .collect();
-                if !processed_hooks.is_empty() {
-                    any_survived = true;
+                if processed_hooks.is_empty() {
+                    // All hooks in this matcher group were dropped; omit the whole entry
+                    // so no dead `{ "matcher": ..., "hooks": [] }` appears in output.
+                    return None;
                 }
+                any_survived = true;
                 new_obj.insert("hooks".to_string(), Value::Array(processed_hooks));
             }
 

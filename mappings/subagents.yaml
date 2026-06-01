@@ -307,7 +307,7 @@ entries:
     degrade: null
     transform: null
     warn: false
-    notes: "UI decoration field. No counterpart in Codex. Silently discarded on conversion. warn:false (no functional impact)."
+    notes: "UI decoration field. No counterpart in Codex. Dropped during conversion and still listed in the conversion report (warn:false, no functional impact)."
     source: "https://code.claude.com/docs/en/sub-agents"
 
   - id: subagents.initialPrompt

@@ -236,14 +236,14 @@ entries:
       type: "string"
       scope: plugin
     direction: both
-    loss: lossless
+    loss: lossy
     degrade: null
     transform: "path:remap"
-    warn: false
+    warn: true
     notes: >
-      The default `./skills/` directory is shared by both sides. Claude allows multiple paths
-      (array) which are appended to the default, but Codex accepts only a single path.
-      When an array is provided, use the first path and emit a warning.
+      All array paths are discovered and their child skills converted, but the Codex manifest
+      `skills` field holds only a single path, so a multi-path array cannot be fully represented
+      in the manifest (a warning is emitted).
     source: "https://code.claude.com/docs/en/plugins-reference"
 
   - id: plugins.mcpServers
