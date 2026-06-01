@@ -123,11 +123,23 @@ impl PluginsHandler {
         let user_config = frontmatter.get("userConfig");
 
         for (key, value) in frontmatter {
-            // experimental は特殊処理（サブフィールドを展開）
+            // experimental is expanded so each sub-field gets its own mapping entry
             if key == "experimental" {
                 if let Some(exp_obj) = value.as_object() {
                     for (sub_key, sub_value) in exp_obj {
                         let full_key = format!("experimental.{}", sub_key);
+                        self.lift_single_field(&full_key, sub_value, idx, dir, node);
+                    }
+                }
+                continue;
+            }
+
+            // interface is expanded so each sub-field (interface.displayName, etc.)
+            // gets routed individually through the mappings index
+            if key == "interface" {
+                if let Some(iface_obj) = value.as_object() {
+                    for (sub_key, sub_value) in iface_obj {
+                        let full_key = format!("interface.{}", sub_key);
                         self.lift_single_field(&full_key, sub_value, idx, dir, node);
                     }
                 }
@@ -207,13 +219,14 @@ impl PluginsHandler {
             None
         };
 
-        if entry.warn == Some(true) {
+        // Dropped fields are already recorded via IRField.dropped — no additional
+        // Diagnostic push is needed.  For genuinely lossy (non-dropped) warn:true
+        // fields, emit a single Warn diagnostic so build_report routes them to the
+        // lossy list.  Pushing a diagnostic for dropped fields would cause
+        // build_report to count each dropped field multiple times.
+        if entry.warn == Some(true) && !matches!(loss, Loss::Dropped) {
             node.diagnostics.push(Diagnostic {
-                level: if matches!(loss, Loss::Dropped) {
-                    DiagLevel::Drop
-                } else {
-                    DiagLevel::Warn
-                },
+                level: DiagLevel::Warn,
                 id: Some(entry.id.clone()),
                 message: entry
                     .notes
@@ -692,13 +705,11 @@ impl PluginsHandler {
 
         // fields から Codex フィールドへ変換
         for (id, field) in &ir.fields {
-            // dropped フィールドはスキップ（report 用の診断のみ追加）
+            // Dropped fields are already represented by IRField.loss == Dropped and
+            // recorded via IRField.dropped.  build_report reads those directly, so
+            // pushing an additional Diagnostic here would cause each dropped field
+            // to appear multiple times in the report summary.
             if matches!(field.loss, Loss::Dropped) {
-                diagnostics.push(Diagnostic {
-                    level: DiagLevel::Drop,
-                    id: Some(id.clone()),
-                    message: format!("{} dropped (no Codex equivalent)", id),
-                });
                 continue;
             }
 
@@ -774,16 +785,13 @@ impl PluginsHandler {
     }
 
     /// IR から Claude 向け plugin.json を構築する（x2c）。
-    fn build_claude_manifest(&self, ir: &IRNode, diagnostics: &mut Vec<Diagnostic>) -> Value {
+    fn build_claude_manifest(&self, ir: &IRNode, _diagnostics: &mut Vec<Diagnostic>) -> Value {
         let mut manifest = Map::new();
 
         for (id, field) in &ir.fields {
+            // Dropped fields are already captured by IRField.loss == Dropped;
+            // no additional Diagnostic needed here.
             if matches!(field.loss, Loss::Dropped) {
-                diagnostics.push(Diagnostic {
-                    level: DiagLevel::Drop,
-                    id: Some(id.clone()),
-                    message: format!("{} dropped (no Claude equivalent)", id),
-                });
                 continue;
             }
 
@@ -820,6 +828,7 @@ impl PluginsHandler {
     }
 
     /// marketplace.json を Codex 向けに変換する（c2x）。
+    /// - Claude-only top-level fields are dropped with DiagLevel::Drop diagnostics
     /// - source スキーマを正規化（Claude `relative`/string → Codex `{source:"local",...}`）
     /// - policy がなければデフォルト値を補完
     fn transform_marketplace_c2x(
@@ -831,11 +840,36 @@ impl PluginsHandler {
             return content.to_string();
         };
 
+        // Drop top-level Claude-only fields that have no Codex marketplace equivalent.
+        // Corresponding mappings entries all carry direction:claude_to_codex + loss:dropped.
+        const CLAUDE_ONLY_FIELDS: &[(&str, &str)] = &[
+            ("owner", "plugins.marketplace.owner"),
+            (
+                "allowCrossMarketplaceDependenciesOn",
+                "plugins.marketplace.allowCrossMarketplaceDependenciesOn",
+            ),
+            (
+                "forceRemoveDeletedPlugins",
+                "plugins.marketplace.forceRemoveDeletedPlugins",
+            ),
+        ];
+        if let Some(obj) = json.as_object_mut() {
+            for (field, mapping_id) in CLAUDE_ONLY_FIELDS {
+                if obj.remove(*field).is_some() {
+                    diagnostics.push(Diagnostic {
+                        level: DiagLevel::Drop,
+                        id: Some(mapping_id.to_string()),
+                        message: format!("`{}` dropped (no Codex marketplace equivalent)", field),
+                    });
+                }
+            }
+        }
+
         if let Some(plugins) = json.get_mut("plugins").and_then(|v| v.as_array_mut()) {
             for plugin_entry in plugins.iter_mut() {
                 if let Some(obj) = plugin_entry.as_object_mut() {
                     // source スキーマ正規化
-                    normalize_marketplace_source_c2x(obj);
+                    normalize_marketplace_source_c2x(obj, diagnostics);
 
                     // policy が未設定なら既定値を補完
                     if !obj.contains_key("policy") {
@@ -926,7 +960,11 @@ fn complete_semver(ver: &str) -> String {
 /// marketplace.json の source スキーマを Codex 向けに正規化する。
 /// - 相対パス文字列 → `{source: "local", path: "..."}`
 /// - `github` は概ねそのまま（フィールド名の違いがあれば warn）
-fn normalize_marketplace_source_c2x(obj: &mut Map<String, Value>) {
+/// - `npm` は Codex に対応なし: source フィールドを削除し Drop diagnostic を追加する
+fn normalize_marketplace_source_c2x(
+    obj: &mut Map<String, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     if let Some(source) = obj.get("source").cloned() {
         match &source {
             Value::String(s) => {
@@ -945,10 +983,23 @@ fn normalize_marketplace_source_c2x(obj: &mut Map<String, Value>) {
                         let mut new_src = src_obj.clone();
                         new_src.insert("source".to_string(), Value::String("local".to_string()));
                         obj.insert("source".to_string(), Value::Object(new_src));
-                    }
-                    // npm は Codex に対応なし
-                    if src_type == "npm" {
-                        obj.insert("source".to_string(), Value::Null);
+                    } else if src_type == "npm" {
+                        // npm has no Codex equivalent; remove the field and report it dropped
+                        let plugin_name = obj
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        obj.remove("source");
+                        diagnostics.push(Diagnostic {
+                            level: DiagLevel::Drop,
+                            id: Some("plugins.marketplace.plugins.source".to_string()),
+                            message: format!(
+                                "marketplace plugin source type 'npm' dropped \
+                                 (no Codex equivalent): plugin '{}'",
+                                plugin_name
+                            ),
+                        });
                     }
                 }
             }
@@ -992,12 +1043,14 @@ mod tests {
     fn default_opts(out: &str) -> LowerOpts {
         LowerOpts {
             out: Some(out.to_string()),
+            only: vec![],
             scope: crate::handlers::Scope::Project,
             dual_manifest: false,
             hooks_target: crate::handlers::Scope::User,
             skill_target: crate::handlers::SkillTargetMode::Skill,
             interactive: false,
             rewrite_body: false,
+            keep_claude_frontmatter: false,
         }
     }
 
@@ -1344,5 +1397,266 @@ mod tests {
         // git SHA
         let sha = "a".repeat(40);
         assert_eq!(complete_semver(&sha), "0.0.0");
+    }
+
+    /// x2c: a Codex plugin.json with a full `interface` object must expand each
+    /// sub-field individually through the mappings index.
+    ///
+    /// Asserts:
+    ///   (a) interface.websiteURL → plugins.interface.websiteURL is Lossy
+    ///   (b) interface.displayName → plugins.display-name is present
+    ///   (c) interface.brandColor → plugins.interface.brandColor is Dropped
+    ///   (d) NO "unknown plugin manifest field: interface" diagnostic
+    ///   (e) lower_x2c emits `homepage` in the Claude plugin.json
+    #[test]
+    fn test_plugins_lift_x2c_interface_fields() {
+        let dir = TempDir::new().unwrap();
+        let plugin_dir = dir.path().join(".codex-plugin");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        let plugin_json = plugin_dir.join("plugin.json");
+        fs::write(
+            &plugin_json,
+            r##"{
+  "name": "codex-plugin",
+  "version": "1.0.0",
+  "description": "A Codex plugin",
+  "interface": {
+    "displayName": "Codex Plugin",
+    "websiteURL": "https://example.com",
+    "developerName": "OpenAI",
+    "category": "utility",
+    "brandColor": "#FF0000"
+  }
+}"##,
+        )
+        .unwrap();
+
+        let h = make_handler();
+        let parsed = h.parse(&plugin_json).unwrap();
+        let ir = h.lift(&parsed, ConvDir::X2c).unwrap();
+
+        // (a) interface.websiteURL must be Lossy (maps to homepage)
+        let website_url = ir
+            .fields
+            .get("plugins.interface.websiteURL")
+            .expect("plugins.interface.websiteURL must be present in IR");
+        assert_eq!(
+            website_url.loss,
+            Loss::Lossy,
+            "plugins.interface.websiteURL must be Lossy"
+        );
+        assert_eq!(
+            website_url.value,
+            Value::String("https://example.com".to_string()),
+            "plugins.interface.websiteURL value mismatch"
+        );
+
+        // (b) interface.displayName → plugins.display-name must be present
+        assert!(
+            ir.fields.contains_key("plugins.display-name"),
+            "plugins.display-name must be present for interface.displayName; fields: {:?}",
+            ir.fields.keys().collect::<Vec<_>>()
+        );
+
+        // (c) interface.brandColor must be Dropped
+        let brand_color = ir
+            .fields
+            .get("plugins.interface.brandColor")
+            .expect("plugins.interface.brandColor must be present in IR");
+        assert_eq!(
+            brand_color.loss,
+            Loss::Dropped,
+            "plugins.interface.brandColor must be Dropped"
+        );
+
+        // (d) NO undifferentiated "unknown plugin manifest field: interface" diagnostic
+        let has_unknown_interface_diag = ir.diagnostics.iter().any(|d| {
+            d.message
+                .contains("unknown plugin manifest field: interface")
+        });
+        assert!(
+            !has_unknown_interface_diag,
+            "interface must NOT produce a single undifferentiated unknown-field diagnostic"
+        );
+
+        // (e) lower_x2c emits `homepage` in the Claude plugin.json
+        let out_dir = TempDir::new().unwrap();
+        let opts = default_opts(out_dir.path().to_str().unwrap());
+        let plan = h.lower(&ir, ConvDir::X2c, &opts).unwrap();
+
+        let claude_manifest = plan
+            .files
+            .iter()
+            .find(|f| f.path.contains(".claude-plugin") && f.path.ends_with("plugin.json"))
+            .expect("Expected .claude-plugin/plugin.json in x2c output");
+
+        let content: Value = serde_json::from_str(&claude_manifest.content).unwrap();
+        assert_eq!(
+            content["homepage"].as_str(),
+            Some("https://example.com"),
+            "interface.websiteURL must map to 'homepage' in Claude plugin.json, got: {}",
+            content
+        );
+    }
+
+    /// c2x: top-level Claude-only marketplace fields are dropped from the output
+    /// and reported as DiagLevel::Drop with the correct mapping IDs.
+    #[test]
+    fn test_plugins_c2x_marketplace_dropped_top_level_fields() {
+        let dir = TempDir::new().unwrap();
+        let plugin_dir = dir.path().join(".claude-plugin");
+        fs::create_dir_all(&plugin_dir).unwrap();
+
+        fs::write(
+            plugin_dir.join("plugin.json"),
+            r#"{"name": "test-plugin", "version": "1.0.0", "description": "Test"}"#,
+        )
+        .unwrap();
+
+        fs::write(
+            plugin_dir.join("marketplace.json"),
+            r#"{
+  "owner": {"name": "ACME", "email": "acme@example.com"},
+  "allowCrossMarketplaceDependenciesOn": ["other"],
+  "forceRemoveDeletedPlugins": true,
+  "plugins": [
+    {"name": "test-plugin", "source": "./", "category": "productivity"}
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let out_dir = dir.path().join("out");
+        let opts = default_opts(out_dir.to_str().unwrap());
+
+        let h = make_handler();
+        let parsed = h.parse(&plugin_dir.join("plugin.json")).unwrap();
+        let ir = h.lift(&parsed, ConvDir::C2x).unwrap();
+        let plan = h.lower(&ir, ConvDir::C2x, &opts).unwrap();
+
+        let marketplace_file = plan
+            .files
+            .iter()
+            .find(|f| f.path.contains("marketplace.json"))
+            .expect("Expected marketplace.json in output");
+
+        let content: Value = serde_json::from_str(&marketplace_file.content).unwrap();
+
+        // (1) Claude-only fields must be absent from output
+        assert!(
+            content.get("owner").is_none(),
+            "owner must be absent from output"
+        );
+        assert!(
+            content.get("allowCrossMarketplaceDependenciesOn").is_none(),
+            "allowCrossMarketplaceDependenciesOn must be absent from output"
+        );
+        assert!(
+            content.get("forceRemoveDeletedPlugins").is_none(),
+            "forceRemoveDeletedPlugins must be absent from output"
+        );
+
+        // (2) Three DiagLevel::Drop entries with the correct mapping IDs
+        let drop_ids: Vec<Option<&str>> = plan
+            .diagnostics
+            .iter()
+            .filter(|d| d.level == DiagLevel::Drop)
+            .map(|d| d.id.as_deref())
+            .collect();
+
+        assert!(
+            drop_ids.contains(&Some("plugins.marketplace.owner")),
+            "Expected Drop diagnostic for plugins.marketplace.owner; drop_ids={:?}",
+            drop_ids
+        );
+        assert!(
+            drop_ids.contains(&Some(
+                "plugins.marketplace.allowCrossMarketplaceDependenciesOn"
+            )),
+            "Expected Drop diagnostic for plugins.marketplace.allowCrossMarketplaceDependenciesOn; drop_ids={:?}",
+            drop_ids
+        );
+        assert!(
+            drop_ids.contains(&Some("plugins.marketplace.forceRemoveDeletedPlugins")),
+            "Expected Drop diagnostic for plugins.marketplace.forceRemoveDeletedPlugins; drop_ids={:?}",
+            drop_ids
+        );
+    }
+
+    /// An npm-source entry in marketplace.json must produce a DiagLevel::Drop
+    /// diagnostic (id "plugins.marketplace.plugins.source") and the source field
+    /// must be absent from the output — not set to null.
+    #[test]
+    fn test_normalize_marketplace_source_c2x_npm_drop_diagnostic() {
+        let dir = TempDir::new().unwrap();
+        let plugin_dir = dir.path().join(".claude-plugin");
+        fs::create_dir_all(&plugin_dir).unwrap();
+
+        fs::write(
+            plugin_dir.join("plugin.json"),
+            r#"{"name": "test-plugin", "version": "1.0.0", "description": "Test"}"#,
+        )
+        .unwrap();
+
+        fs::write(
+            plugin_dir.join("marketplace.json"),
+            r#"{
+  "plugins": [
+    {
+      "name": "plugin-c",
+      "source": {"source": "npm", "package": "my-plugin"},
+      "category": "tools"
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let out_dir = dir.path().join("out");
+        let opts = default_opts(out_dir.to_str().unwrap());
+
+        let h = make_handler();
+        let parsed = h.parse(&plugin_dir.join("plugin.json")).unwrap();
+        let ir = h.lift(&parsed, ConvDir::C2x).unwrap();
+        let plan = h.lower(&ir, ConvDir::C2x, &opts).unwrap();
+
+        // (1) A DiagLevel::Drop diagnostic with the correct id must be present.
+        let drop_diag = plan.diagnostics.iter().find(|d| {
+            d.level == DiagLevel::Drop
+                && d.id.as_deref() == Some("plugins.marketplace.plugins.source")
+        });
+        assert!(
+            drop_diag.is_some(),
+            "Expected DiagLevel::Drop with id 'plugins.marketplace.plugins.source'; \
+             diagnostics: {:?}",
+            plan.diagnostics
+        );
+
+        let msg = &drop_diag.unwrap().message;
+        assert!(
+            msg.to_lowercase().contains("npm"),
+            "Drop message must mention 'npm', got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("plugin-c"),
+            "Drop message must contain plugin name 'plugin-c', got: {}",
+            msg
+        );
+
+        // (2) The output marketplace.json must not contain a null source for plugin-c.
+        let marketplace_file = plan
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("marketplace.json"))
+            .expect("Expected marketplace.json in output");
+
+        let content: Value = serde_json::from_str(&marketplace_file.content).unwrap();
+        let plugin_c = content["plugins"][0].as_object().unwrap();
+        assert!(
+            plugin_c.get("source").is_none_or(|s| !s.is_null()),
+            "source must not be null; found: {:?}",
+            plugin_c
+        );
     }
 }

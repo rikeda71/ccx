@@ -28,6 +28,22 @@ pub enum Kind {
     Settings,
 }
 
+impl Kind {
+    /// Returns the domain name used in `--only` filter comparisons and in
+    /// `mappings/*.yaml` keys (e.g. `"skills"`, `"mcp"`).
+    pub fn domain_name(&self) -> &'static str {
+        match self {
+            Kind::Skill => "skills",
+            Kind::Plugin => "plugins",
+            Kind::Subagent => "subagents",
+            Kind::Hooks => "hooks",
+            Kind::Mcp => "mcp",
+            Kind::Memory => "memory",
+            Kind::Settings => "settings",
+        }
+    }
+}
+
 /// mappings の1エントリに対応する正規化済み変換単位。
 #[derive(Debug, Clone)]
 pub struct IRField {

@@ -122,7 +122,7 @@ impl HooksHandler {
             }
 
             if CLAUDE_ONLY_EVENTS.contains(&event_name.as_str()) {
-                // dropped
+                // dropped — IRField is the single canonical source; no diagnostic needed here.
                 node.fields.insert(
                     format!("hooks.event.{}", event_name),
                     IRField {
@@ -140,34 +140,47 @@ impl HooksHandler {
                         }),
                     },
                 );
-                node.diagnostics.push(Diagnostic {
-                    level: DiagLevel::Drop,
-                    id: Some(format!("hooks.event.{}", event_name)),
-                    message: format!(
-                        "Event '{}' is Claude-specific and will be dropped in c2x conversion",
-                        event_name
-                    ),
-                });
                 continue;
             }
 
             if COMMON_EVENTS.contains(&event_name.as_str()) {
                 // Process each hook entry in the event array
-                let processed = process_hook_entries_c2x(event_name, event_entries, &mut node);
+                let (processed, any_survived) =
+                    process_hook_entries_c2x(event_name, event_entries, &mut node);
+                // If every hook item was dropped (e.g. all are type:http), the event
+                // carries no surviving semantic content and must be classified as Dropped.
+                let (loss, dropped_info, warning_msg) = if any_survived {
+                    (Loss::Lossless, None, None)
+                } else {
+                    (
+                        Loss::Dropped,
+                        Some(DroppedInfo {
+                            reason: format!(
+                                "All hook types for event '{}' were dropped \
+                                 (http/mcp_tool/prompt/agent have no Codex equivalent)",
+                                event_name
+                            ),
+                        }),
+                        Some(format!(
+                            "Event '{}': all hook items were dropped; no Codex equivalent",
+                            event_name
+                        )),
+                    )
+                };
                 node.fields.insert(
                     format!("hooks.event.{}", event_name),
                     IRField {
                         id: format!("hooks.event.{}", event_name),
                         value: processed,
-                        loss: Loss::Lossless,
+                        loss,
                         transforms_applied: vec!["format:json_to_toml".to_string()],
                         degrade: None,
-                        warning: None,
-                        dropped: None,
+                        warning: warning_msg,
+                        dropped: dropped_info,
                     },
                 );
             } else {
-                // unknown event → dropped
+                // unknown event → dropped — IRField is the single canonical source.
                 node.fields.insert(
                     format!("hooks.event.{}", event_name),
                     IRField {
@@ -182,11 +195,6 @@ impl HooksHandler {
                         }),
                     },
                 );
-                node.diagnostics.push(Diagnostic {
-                    level: DiagLevel::Drop,
-                    id: None,
-                    message: format!("Unknown hook event '{}' dropped", event_name),
-                });
             }
         }
 
@@ -198,9 +206,20 @@ impl HooksHandler {
         let source_path = parsed["path"].as_str().unwrap_or("").to_string();
         let mut node = new_node(Kind::Hooks, Tool::Codex, &source_path);
 
-        // parsed はすでに {"hooks": {"EventName": [...]}} 構造
+        // Resolve the event-keyed object from whatever parse() produced.
+        // parse_json_file wraps file content under "frontmatter"; flat Codex hooks.json
+        // ({"EventName":[...]}) therefore arrives as frontmatter rather than a "hooks" key.
         let hooks_obj = if let Some(h) = parsed.get("hooks").and_then(|v| v.as_object()) {
+            // TOML parser path: {"path":..., "hooks":{"EventName":[...]}}
             h.clone()
+        } else if let Some(fm) = parsed.get("frontmatter").and_then(|v| v.as_object()) {
+            // JSON parser path: frontmatter may have a nested "hooks" key (settings.json-style)
+            // or may itself be the flat event map (standalone hooks.json).
+            if let Some(h) = fm.get("hooks").and_then(|v| v.as_object()) {
+                h.clone()
+            } else {
+                fm.clone()
+            }
         } else if let Some(obj) = parsed.as_object() {
             obj.clone()
         } else {
@@ -250,7 +269,7 @@ impl HooksHandler {
 
     /// c2x: IR → Codex TOML hooks
     fn lower_c2x(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
-        let mut diagnostics = ir.diagnostics.clone();
+        let mut diagnostics = Vec::new();
         let out_root = opts.out.as_deref().unwrap_or(".");
 
         // #16430 warn: plugin-bundled hooks are not loaded by Codex
@@ -305,7 +324,7 @@ impl HooksHandler {
 
     /// x2c: IR → Claude JSON hooks
     fn lower_x2c(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
-        let diagnostics = ir.diagnostics.clone();
+        let diagnostics = Vec::new();
         let out_root = opts.out.as_deref().unwrap_or(".");
 
         let mut hooks_obj = serde_json::Map::new();
@@ -335,12 +354,16 @@ impl HooksHandler {
 
 /// hooks の各エントリを c2x 方向で処理する（matcher 正規化、dropped フィールドの除外）。
 /// 副作用として node.diagnostics に警告を追加する。
-fn process_hook_entries_c2x(event_name: &str, entries: &Value, node: &mut IRNode) -> Value {
+///
+/// Returns `(processed_value, any_survived)` where `any_survived` is `true` if
+/// at least one hook item survived filtering across all matcher groups.
+fn process_hook_entries_c2x(event_name: &str, entries: &Value, node: &mut IRNode) -> (Value, bool) {
     let arr = match entries.as_array() {
         Some(a) => a,
-        None => return entries.clone(),
+        None => return (entries.clone(), true),
     };
 
+    let mut any_survived = false;
     let processed: Vec<Value> = arr
         .iter()
         .filter_map(|entry| {
@@ -349,27 +372,32 @@ fn process_hook_entries_c2x(event_name: &str, entries: &Value, node: &mut IRNode
 
             // matcher 正規化
             if let Some(matcher) = obj.get("matcher").and_then(|v| v.as_str()) {
-                let (normalized, lossy) = normalize_matcher_c2x(matcher);
+                let (normalized, kind) = normalize_matcher_c2x(matcher);
                 new_obj.insert("matcher".to_string(), Value::String(normalized.clone()));
-                if lossy {
-                    node.diagnostics.push(Diagnostic {
-                        level: DiagLevel::Warn,
-                        id: Some("hooks.matcher.exact".to_string()),
-                        message: format!(
-                            "Event '{}' matcher '{}' normalized to '{}' (lossy: Codex uses regex evaluation)",
-                            event_name, matcher, normalized
-                        ),
-                    });
-                } else {
-                    // regex passthrough: Codex evaluates matchers as regexes; preserve and warn
-                    node.diagnostics.push(Diagnostic {
-                        level: DiagLevel::Warn,
-                        id: Some("hooks.matcher.regex".to_string()),
-                        message: format!(
-                            "Event '{}' matcher '{}' passed through as-is (contains regex characters; Codex evaluates it as a regex)",
-                            event_name, matcher
-                        ),
-                    });
+                match kind {
+                    MatcherKind::Wildcard => {
+                        node.diagnostics.push(Diagnostic {
+                            level: DiagLevel::Warn,
+                            id: Some("hooks.matcher.wildcard".to_string()),
+                            message: format!(
+                                "Event '{}' matcher '{}' is a Claude wildcard; normalized to '' for Codex (lossy)",
+                                event_name, matcher
+                            ),
+                        });
+                    }
+                    MatcherKind::Exact => {
+                        node.diagnostics.push(Diagnostic {
+                            level: DiagLevel::Warn,
+                            id: Some("hooks.matcher.exact".to_string()),
+                            message: format!(
+                                "Event '{}' matcher '{}' normalized to '{}' (lossy: Codex uses regex evaluation)",
+                                event_name, matcher, normalized
+                            ),
+                        });
+                    }
+                    // Regex matchers are passed through unchanged (lossless, warn:false per
+                    // mappings/hooks.yaml `hooks.matcher.regex`). No diagnostic is emitted.
+                    MatcherKind::Regex => {}
                 }
             }
 
@@ -379,6 +407,9 @@ fn process_hook_entries_c2x(event_name: &str, entries: &Value, node: &mut IRNode
                     .iter()
                     .filter_map(|h| process_single_hook_c2x(h, event_name, node))
                     .collect();
+                if !processed_hooks.is_empty() {
+                    any_survived = true;
+                }
                 new_obj.insert("hooks".to_string(), Value::Array(processed_hooks));
             }
 
@@ -386,7 +417,7 @@ fn process_hook_entries_c2x(event_name: &str, entries: &Value, node: &mut IRNode
         })
         .collect();
 
-    Value::Array(processed)
+    (Value::Array(processed), any_survived)
 }
 
 /// hooks の各エントリを x2c 方向で処理する（commandWindows → shell 変換等）。
@@ -473,7 +504,7 @@ fn process_single_hook_c2x(hook: &Value, event_name: &str, node: &mut IRNode) ->
         let synthesized = synthesize_command(command, args_arr);
         new_obj.insert("command".to_string(), Value::String(synthesized));
         node.diagnostics.push(Diagnostic {
-            level: DiagLevel::Warn,
+            level: DiagLevel::Drop,
             id: Some("hooks.command.args".to_string()),
             message: format!(
                 "Event '{}': 'args' field dropped (synthesized into 'command' with shell escaping)",
@@ -536,35 +567,37 @@ fn process_single_hook_x2c(hook: &Value, node: &mut IRNode) -> Option<Value> {
     Some(Value::Object(new_obj))
 }
 
-/// matcher 正規化（c2x）。
-/// - exact（英数字・_・| のみ）→ "^Bash$" / "^(Edit|Write)$"
-/// - wildcard（"*" または ""）→ "" (全マッチ)
-/// - regex 的文字を含む → そのまま（warn）
+/// Classifier for the matcher normalization result.
+#[derive(Debug, PartialEq, Eq)]
+enum MatcherKind {
+    /// "*" or "" — maps to `hooks.matcher.wildcard` (lossy).
+    Wildcard,
+    /// Alphanumeric/`_`/`|` only — maps to `hooks.matcher.exact` (lossy).
+    Exact,
+    /// Contains regex metacharacters — passed through as-is (`hooks.matcher.regex`, lossless).
+    Regex,
+}
+
+/// Normalises a Claude matcher string for Codex (c2x direction).
 ///
-/// Returns (normalized_matcher, is_lossy)
-fn normalize_matcher_c2x(matcher: &str) -> (String, bool) {
+/// Returns `(normalized, MatcherKind)`.
+fn normalize_matcher_c2x(matcher: &str) -> (String, MatcherKind) {
     if matcher.is_empty() || matcher == "*" {
-        // wildcard → "" (全マッチ)
-        return ("".to_string(), true);
+        return ("".to_string(), MatcherKind::Wildcard);
     }
 
-    // 英数字・_・| のみかチェック
     let is_exact = matcher
         .chars()
         .all(|c| c.is_alphanumeric() || c == '_' || c == '|');
 
     if is_exact {
-        // exact or alternation
         if matcher.contains('|') {
-            // alternation → "^(Edit|Write)$"
-            (format!("^({})$", matcher), true)
+            (format!("^({})$", matcher), MatcherKind::Exact)
         } else {
-            // single exact → "^Bash$"
-            (format!("^{}$", matcher), true)
+            (format!("^{}$", matcher), MatcherKind::Exact)
         }
     } else {
-        // regex 的文字を含む → そのまま（warn）
-        (matcher.to_string(), false)
+        (matcher.to_string(), MatcherKind::Regex)
     }
 }
 
@@ -808,12 +841,14 @@ mod tests {
     fn default_opts(out_dir: &str) -> LowerOpts {
         LowerOpts {
             out: Some(out_dir.to_string()),
+            only: vec![],
             scope: Scope::Project,
             dual_manifest: false,
             hooks_target: Scope::User,
             skill_target: crate::handlers::SkillTargetMode::Skill,
             interactive: false,
             rewrite_body: false,
+            keep_claude_frontmatter: false,
         }
     }
 
@@ -828,37 +863,84 @@ mod tests {
 
     #[test]
     fn test_normalize_matcher_exact() {
-        let (norm, lossy) = normalize_matcher_c2x("Bash");
+        let (norm, kind) = normalize_matcher_c2x("Bash");
         assert_eq!(norm, "^Bash$");
-        assert!(lossy);
+        assert_eq!(kind, MatcherKind::Exact);
     }
 
     #[test]
     fn test_normalize_matcher_alternation() {
-        let (norm, lossy) = normalize_matcher_c2x("Edit|Write");
+        let (norm, kind) = normalize_matcher_c2x("Edit|Write");
         assert_eq!(norm, "^(Edit|Write)$");
-        assert!(lossy);
+        assert_eq!(kind, MatcherKind::Exact);
     }
 
     #[test]
     fn test_normalize_matcher_wildcard_star() {
-        let (norm, lossy) = normalize_matcher_c2x("*");
+        let (norm, kind) = normalize_matcher_c2x("*");
         assert_eq!(norm, "");
-        assert!(lossy);
+        assert_eq!(kind, MatcherKind::Wildcard);
     }
 
     #[test]
     fn test_normalize_matcher_wildcard_empty() {
-        let (norm, lossy) = normalize_matcher_c2x("");
+        let (norm, kind) = normalize_matcher_c2x("");
         assert_eq!(norm, "");
-        assert!(lossy);
+        assert_eq!(kind, MatcherKind::Wildcard);
+    }
+
+    /// Regression test for gap 40/42: empty-string matcher must emit id
+    /// "hooks.matcher.wildcard", not "hooks.matcher.exact".
+    /// The value does not change ("" → ""), so no exact-normalization diagnostic
+    /// should be emitted; the only diagnostic must be the wildcard one.
+    #[test]
+    fn test_normalize_matcher_wildcard_empty_emits_correct_id() {
+        let h = make_handler();
+        let hooks_json = serde_json::json!({
+            "hooks": {
+                "Stop": [{
+                    "matcher": "",
+                    "hooks": [{ "type": "command", "command": "echo stop" }]
+                }]
+            }
+        });
+
+        let ir = h.lift_c2x(&hooks_json).unwrap();
+
+        // Must emit id "hooks.matcher.wildcard" for the empty-string matcher.
+        let has_wildcard_id = ir
+            .diagnostics
+            .iter()
+            .any(|d| d.id.as_deref() == Some("hooks.matcher.wildcard"));
+        assert!(
+            has_wildcard_id,
+            "Empty-string matcher must emit id 'hooks.matcher.wildcard'; diagnostics: {:?}",
+            ir.diagnostics
+                .iter()
+                .map(|d| d.id.as_deref().unwrap_or("<none>"))
+                .collect::<Vec<_>>()
+        );
+
+        // Must NOT emit "hooks.matcher.exact" — the value did not change.
+        let has_exact_id = ir
+            .diagnostics
+            .iter()
+            .any(|d| d.id.as_deref() == Some("hooks.matcher.exact"));
+        assert!(
+            !has_exact_id,
+            "Empty-string matcher must NOT emit 'hooks.matcher.exact'; diagnostics: {:?}",
+            ir.diagnostics
+                .iter()
+                .map(|d| d.id.as_deref().unwrap_or("<none>"))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn test_normalize_matcher_regex_passthrough() {
-        let (norm, lossy) = normalize_matcher_c2x("^Bash.*");
+        let (norm, kind) = normalize_matcher_c2x("^Bash.*");
         assert_eq!(norm, "^Bash.*");
-        assert!(!lossy);
+        assert_eq!(kind, MatcherKind::Regex);
     }
 
     #[test]
@@ -908,13 +990,19 @@ mod tests {
 
         let field = ir.fields.get("hooks.event.Setup");
         assert!(field.is_some(), "Expected Setup field");
-        assert_eq!(field.unwrap().loss, Loss::Dropped);
-        // diagnostic
-        let has_drop_diag = ir
-            .diagnostics
-            .iter()
-            .any(|d| d.level == DiagLevel::Drop && d.message.contains("Setup"));
-        assert!(has_drop_diag, "Expected Drop diagnostic for Setup event");
+        let f = field.unwrap();
+        assert_eq!(f.loss, Loss::Dropped);
+        // The canonical dropped info lives in the IRField; no separate diagnostic is emitted
+        // to avoid double-counting in build_report.
+        assert!(
+            f.dropped.is_some(),
+            "Expected dropped reason in IRField for Setup"
+        );
+        assert!(
+            f.dropped.as_ref().unwrap().reason.contains("Setup"),
+            "Expected 'Setup' in dropped reason, got: {}",
+            f.dropped.as_ref().unwrap().reason
+        );
     }
 
     #[test]
@@ -1123,6 +1211,245 @@ mod tests {
         );
     }
 
+    /// Verifies that lift_x2c handles a parse_json_file-wrapped value correctly.
+    /// parse_json_file wraps top-level JSON content under a "frontmatter" key;
+    /// lift_x2c must unwrap it before iterating event keys.
+    #[test]
+    fn test_hooks_lift_x2c_json_flat_format() {
+        // Simulate what parse_json_file produces from a flat Codex hooks.json
+        // (i.e., {"PreToolUse":[...]} wrapped as {"frontmatter":{...}, "body":"", "path":"..."})
+        let parsed = serde_json::json!({
+            "frontmatter": {
+                "PreToolUse": [
+                    {
+                        "matcher": "^Bash$",
+                        "hooks": [
+                            { "type": "command", "command": "echo test" }
+                        ]
+                    }
+                ]
+            },
+            "body": "",
+            "path": "/tmp/hooks.json"
+        });
+
+        let h = make_handler();
+        let ir = h.lift_x2c(&parsed).unwrap();
+
+        let field = ir.fields.get("hooks.event.PreToolUse");
+        assert!(
+            field.is_some(),
+            "Expected hooks.event.PreToolUse in IR; fields were: {:?}",
+            ir.fields.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            field.unwrap().loss,
+            Loss::Lossless,
+            "PreToolUse must be Lossless"
+        );
+    }
+
+    /// Wildcard matchers ("*" and "") must emit `id: "hooks.matcher.wildcard"`, not
+    /// `"hooks.matcher.exact"`.  Spec entry `hooks.matcher.wildcard` exists in
+    /// mappings/hooks.yaml and covers the lossy conversion "*" / "" → "".
+    #[test]
+    fn test_hooks_matcher_wildcard_id() {
+        let h = make_handler();
+
+        for wildcard_matcher in &["*", ""] {
+            let hooks_json = serde_json::json!({
+                "hooks": {
+                    "Stop": [{
+                        "matcher": wildcard_matcher,
+                        "hooks": [{ "type": "command", "command": "echo done" }]
+                    }]
+                }
+            });
+
+            let ir = h.lift_c2x(&hooks_json).unwrap();
+
+            let has_wildcard_id = ir
+                .diagnostics
+                .iter()
+                .any(|d| d.id.as_deref() == Some("hooks.matcher.wildcard"));
+            assert!(
+                has_wildcard_id,
+                "matcher '{}' must emit id 'hooks.matcher.wildcard' but diagnostics were: {:?}",
+                wildcard_matcher,
+                ir.diagnostics
+                    .iter()
+                    .map(|d| d.id.as_deref().unwrap_or("<none>"))
+                    .collect::<Vec<_>>()
+            );
+
+            // Must NOT emit hooks.matcher.exact for a wildcard
+            let has_exact_id = ir
+                .diagnostics
+                .iter()
+                .any(|d| d.id.as_deref() == Some("hooks.matcher.exact"));
+            assert!(
+                !has_exact_id,
+                "matcher '{}' must NOT emit 'hooks.matcher.exact', diagnostics: {:?}",
+                wildcard_matcher,
+                ir.diagnostics
+                    .iter()
+                    .map(|d| d.id.as_deref().unwrap_or("<none>"))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Regex passthrough matchers (e.g. "^Bash.*") must emit NO diagnostic
+    /// (loss:lossless, warn:false per mappings/hooks.yaml `hooks.matcher.regex`).
+    /// The event must NOT have any "hooks.matcher.regex" Warn diagnostic.
+    #[test]
+    fn test_hooks_regex_matcher_no_warn() {
+        let h = make_handler();
+
+        let hooks_json = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "^Bash.*",
+                    "hooks": [{ "type": "command", "command": "echo test" }]
+                }]
+            }
+        });
+
+        let ir = h.lift_c2x(&hooks_json).unwrap();
+
+        // Must NOT emit any hooks.matcher.regex Warn diagnostic
+        let regex_warn_diags: Vec<_> = ir
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.id.as_deref() == Some("hooks.matcher.regex") && d.level == DiagLevel::Warn
+            })
+            .collect();
+        assert!(
+            regex_warn_diags.is_empty(),
+            "regex passthrough must produce no Warn diagnostic; got: {:?}",
+            regex_warn_diags
+                .iter()
+                .map(|d| &d.message)
+                .collect::<Vec<_>>()
+        );
+
+        // The event field must be Lossless (regex passthrough is lossless)
+        let field = ir.fields.get("hooks.event.PreToolUse").unwrap();
+        assert_eq!(
+            field.loss,
+            Loss::Lossless,
+            "hooks.event.PreToolUse must be Lossless for regex matcher"
+        );
+
+        // The matcher value must be preserved unchanged
+        let entries = field.value.as_array().unwrap();
+        let matcher = entries[0].get("matcher").and_then(|v| v.as_str()).unwrap();
+        assert_eq!(
+            matcher, "^Bash.*",
+            "regex matcher must be passed through unchanged"
+        );
+    }
+
+    /// gap 29/42: `hooks.command.args` must emit DiagLevel::Drop (not Warn).
+    /// mappings/hooks.yaml declares `id: hooks.command.args` with `loss: dropped`.
+    /// Spec §7 invariant #1: dropped entries must always be listed as dropped.
+    #[test]
+    fn test_hooks_lift_c2x_args_emits_drop_diagnostic() {
+        let hooks_json = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "my-script",
+                        "args": ["--flag"]
+                    }]
+                }]
+            }
+        });
+
+        let h = make_handler();
+        let ir = h.lift_c2x(&hooks_json).unwrap();
+
+        // Must emit exactly one diagnostic with id "hooks.command.args"
+        let args_diags: Vec<_> = ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.id.as_deref() == Some("hooks.command.args"))
+            .collect();
+        assert!(
+            !args_diags.is_empty(),
+            "Expected a diagnostic with id 'hooks.command.args'"
+        );
+
+        // That diagnostic MUST be DiagLevel::Drop, not Warn
+        for diag in &args_diags {
+            assert_eq!(
+                diag.level,
+                DiagLevel::Drop,
+                "hooks.command.args diagnostic must be DiagLevel::Drop (mappings: loss:dropped), got {:?}",
+                diag.level
+            );
+        }
+    }
+
+    /// gap 29/42: build_report must place hooks.command.args in `dropped`, not `lossy`.
+    #[test]
+    fn test_hooks_args_in_report_dropped_not_lossy() {
+        let hooks_json = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "my-script",
+                        "args": ["--flag"]
+                    }]
+                }]
+            }
+        });
+
+        let h = make_handler();
+        let ir = h.lift_c2x(&hooks_json).unwrap();
+
+        let dir = TempDir::new().unwrap();
+        let opts = default_opts(dir.path().to_str().unwrap());
+        let plan = h.lower_c2x(&ir, &opts).unwrap();
+
+        let report = crate::core::report::build_report(&ir, &plan);
+
+        // Must appear in dropped
+        let in_dropped = report
+            .dropped
+            .iter()
+            .any(|e| e.id.as_deref() == Some("hooks.command.args"));
+        assert!(
+            in_dropped,
+            "hooks.command.args must appear in report.dropped; dropped={:?}",
+            report
+                .dropped
+                .iter()
+                .map(|e| e.id.as_deref().unwrap_or("<none>"))
+                .collect::<Vec<_>>()
+        );
+
+        // Must NOT appear in lossy
+        let in_lossy = report
+            .lossy
+            .iter()
+            .any(|e| e.id.as_deref() == Some("hooks.command.args"));
+        assert!(
+            !in_lossy,
+            "hooks.command.args must NOT appear in report.lossy; lossy={:?}",
+            report
+                .lossy
+                .iter()
+                .map(|e| e.id.as_deref().unwrap_or("<none>"))
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn test_hooks_lift_c2x_16430_warn() {
         let hooks_json = serde_json::json!({
@@ -1146,5 +1473,64 @@ mod tests {
             .iter()
             .any(|d| d.message.contains("#16430"));
         assert!(has_16430_warn, "Expected #16430 warning in diagnostics");
+    }
+
+    /// gap 41/42: when all hook items within an event entry are dropped (e.g. only
+    /// `type:http`), the event field must be `Loss::Dropped`, not `Loss::Lossless`.
+    #[test]
+    fn test_hooks_lift_c2x_all_http_event_is_dropped() {
+        let hooks_json = serde_json::json!({
+            "hooks": {
+                "PostToolUse": [{
+                    "matcher": "",
+                    "hooks": [{ "type": "http", "url": "https://example.com" }]
+                }]
+            }
+        });
+
+        let h = make_handler();
+        let ir = h.lift_c2x(&hooks_json).unwrap();
+
+        let field = ir
+            .fields
+            .get("hooks.event.PostToolUse")
+            .expect("hooks.event.PostToolUse must exist");
+        assert_eq!(
+            field.loss,
+            Loss::Dropped,
+            "Event with only http hooks must be Loss::Dropped, got {:?}",
+            field.loss
+        );
+        assert!(field.dropped.is_some(), "dropped reason must be populated");
+    }
+
+    /// gap 41/42: a common event where at least one command hook survives must
+    /// remain `Loss::Lossless` even if other hooks in the same entry are dropped.
+    #[test]
+    fn test_hooks_lift_c2x_mixed_hooks_event_is_lossless() {
+        let hooks_json = serde_json::json!({
+            "hooks": {
+                "PostToolUse": [{
+                    "matcher": "",
+                    "hooks": [
+                        { "type": "http", "url": "https://example.com" },
+                        { "type": "command", "command": "echo post" }
+                    ]
+                }]
+            }
+        });
+
+        let h = make_handler();
+        let ir = h.lift_c2x(&hooks_json).unwrap();
+
+        let field = ir
+            .fields
+            .get("hooks.event.PostToolUse")
+            .expect("hooks.event.PostToolUse must exist");
+        assert_eq!(
+            field.loss,
+            Loss::Lossless,
+            "Event where at least one hook survives must remain Loss::Lossless"
+        );
     }
 }

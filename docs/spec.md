@@ -604,10 +604,10 @@ Mostly mappings-driven mechanical transforms.
 - Transport: Claude explicit `type` ↔ Codex implicit (`command` present = stdio, `url` present = http)
 
 **HTTP transport `env` restriction:** Codex `env` is stdio-only. For c2x with http transport:
-1. `env` values in `${VAR}` form → convert to `env_http_headers` (header name = env key, value = `$VAR`).
+1. `env` values in `${VAR}` form → convert to `env_http_headers` (header name = env key, value = bare `VAR` — Codex maps a header to an env-var *name*, e.g. `{ "X-Auth": "AUTH_ENV" }`).
 2. Literal values → warn + request manual action.
 
-**`env_http_headers` x2c direction:** Codex `env_http_headers` entries are converted back to Claude `headers` as `${VAR}` form (e.g. `{ "Authorization": "$API_KEY" }` → `headers.Authorization: "${API_KEY}"`). This is the inverse of the c2x transform above.
+**`env_http_headers` x2c direction:** Codex `env_http_headers` entries are converted back to Claude `headers` as `${VAR}` form (e.g. `{ "Authorization": "API_KEY" }` → `headers.Authorization: "${API_KEY}"`). This is the inverse of the c2x transform above.
 
 **Dropped (c2x):** `alwaysLoad`, `headersHelper`, `sse`/`ws` transport, `oauth.authServerMetadataUrl`.  
 **Dropped (x2c):** `enabled_tools`, `disabled_tools`, `default_tools_approval_mode`, `tools.<name>.approval_mode`, `startup_timeout_sec`, `env_vars`, `required`, `supports_parallel_tool_calls`, `environment_id`, `oauth_resource`.  

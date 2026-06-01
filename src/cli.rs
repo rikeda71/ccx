@@ -2,7 +2,8 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::core::{
-    detect::detect,
+    detect::detect_files,
+    ir::Kind,
     mappings::load_mappings,
     report::{build_report, print_report},
     transforms::ConvDir,
@@ -106,21 +107,120 @@ pub fn run() -> anyhow::Result<()> {
     }
 }
 
+/// Computes the spec-mandated default output root when `--out` is not provided.
+///
+/// - Skill file (`SKILL.md`): `<parent_dir>.converted` (skill dir + `.converted`).
+/// - Skill directory: `<path>.converted`.
+/// - `.mcp.json` file: `<parent_dir>/<stem>.converted` (e.g. `.mcp.converted`).
+/// - Any other directory (project root): `<path>/.codex-converted`.
+pub fn default_out_dir(path: &str, kind: &Kind) -> String {
+    let p = Path::new(path);
+    let file_name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+    match kind {
+        Kind::Skill => {
+            // If the path points to a SKILL.md file, use its parent as the skill dir.
+            // If it points to a skill directory directly, use the path itself.
+            if file_name == "SKILL.md" {
+                let skill_dir = p.parent().unwrap_or(p);
+                format!("{}.converted", skill_dir.display())
+            } else {
+                format!("{}.converted", p.display())
+            }
+        }
+        Kind::Mcp if file_name.ends_with(".json") => {
+            // Derive stem by stripping the last extension; ".mcp.json" → ".mcp".
+            let parent = p.parent().unwrap_or(Path::new("."));
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(".mcp");
+            format!("{}/{}.converted", parent.display(), stem)
+        }
+        _ => {
+            // Project root or any other directory input → .codex-converted inside it.
+            // Use the path as-is (whether a dir or a file's parent).
+            if file_name.contains('.') && p.extension().is_some() {
+                // Looks like a file path — use its parent directory.
+                let parent = p.parent().unwrap_or(Path::new("."));
+                format!("{}/.codex-converted", parent.display())
+            } else {
+                format!("{}/.codex-converted", p.display())
+            }
+        }
+    }
+}
+
 fn run_convert(dir: ConvDir, path: &str, opts: &ConvertOpts) -> anyhow::Result<()> {
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let kind = detect(path)?;
-    let handler = pick_handler(&kind, &maps);
-    let parsed = handler.parse(Path::new(path))?;
-    let ir = handler.lift(&parsed, dir)?;
-    let lower_opts = build_lower_opts(opts);
-    let plan = handler.lower(&ir, dir, &lower_opts)?;
-    let report = build_report(&ir, &plan);
-    if !opts.dry_run {
-        write_plan(&plan, opts.force)?;
+
+    let pairs = detect_files(path)?;
+
+    // Compute the spec-mandated default output root when --out is omitted.
+    // Use the dominant (first detected) kind to determine the naming convention.
+    let effective_out: Option<String> = opts
+        .out
+        .clone()
+        .or_else(|| pairs.first().map(|(kind, _)| default_out_dir(path, kind)));
+    let mut resolved_opts = opts.clone();
+    resolved_opts.out = effective_out;
+
+    let lower_opts = build_lower_opts(&resolved_opts);
+
+    let mut combined_files = Vec::new();
+    let mut combined_diags = Vec::new();
+    let mut total_dropped = 0usize;
+
+    for (kind, file_path) in &pairs {
+        // Apply domain filter: skip files whose domain is not in the allow-list.
+        if !lower_opts.only.is_empty() {
+            let domain = kind.domain_name();
+            if !lower_opts.only.iter().any(|d| d.as_str() == domain) {
+                continue;
+            }
+        }
+
+        let handler = pick_handler(kind, &maps);
+        let parsed = match handler.parse(file_path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("warning: skipping {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+        let ir = match handler.lift(&parsed, dir) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("warning: skipping {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+        let plan = match handler.lower(&ir, dir, &lower_opts) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("warning: skipping {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+        let report = build_report(&ir, &plan);
+        total_dropped += report.dropped.len();
+        // Print the report when explicitly requested, or on --dry-run (whose sole
+        // purpose is to show the report without writing).
+        if opts.report.is_some() || opts.dry_run {
+            let report_fmt = opts.report.as_ref().and_then(|f| f.as_deref());
+            print_report(&report, report_fmt);
+        }
+        combined_files.extend(plan.files);
+        combined_diags.extend(plan.diagnostics);
     }
-    let report_fmt = opts.report.as_ref().and_then(|r| r.as_deref());
-    print_report(&report, report_fmt);
-    let exit_code = if opts.strict && !report.dropped.is_empty() {
+
+    let combined_plan = EmitPlan {
+        files: combined_files,
+        diagnostics: combined_diags,
+    };
+
+    if !opts.dry_run {
+        write_plan(&combined_plan, opts.force)?;
+    }
+
+    let exit_code = if opts.strict && total_dropped > 0 {
         2
     } else {
         0
@@ -131,41 +231,87 @@ fn run_convert(dir: ConvDir, path: &str, opts: &ConvertOpts) -> anyhow::Result<(
     Ok(())
 }
 
+/// Infers the conversion direction from the source path.
+///
+/// Returns `ConvDir::X2c` for Codex-origin files and directories
+/// (`config.toml`, `AGENTS.md`, `AGENTS.override.md`, paths under `.agents/`
+/// or `.codex/`). Returns `ConvDir::C2x` for everything else.
+pub fn infer_conv_dir(path: &str) -> ConvDir {
+    let p = Path::new(path);
+    let file_name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+    // Match Codex-origin directories by path component so relative paths like
+    // `.agents/skills/x/SKILL.md` (no leading slash) are still recognised.
+    let under_codex_dir = p.components().any(|c| {
+        matches!(
+            c.as_os_str().to_str(),
+            Some(".agents") | Some(".codex") | Some(".codex-plugin")
+        )
+    });
+
+    if matches!(
+        file_name,
+        "config.toml" | "AGENTS.md" | "AGENTS.override.md"
+    ) || under_codex_dir
+    {
+        ConvDir::X2c
+    } else {
+        ConvDir::C2x
+    }
+}
+
 /// check サブコマンド: 書き込まず dropped 件数のみ報告する。
 fn run_check(path: &str) -> anyhow::Result<()> {
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let kind = detect(path)?;
-    let handler = pick_handler(&kind, &maps);
-    let parsed = handler.parse(Path::new(path))?;
 
-    // check はどちらの方向も診断できるが、デフォルト c2x で lift する
-    let ir = handler.lift(&parsed, ConvDir::C2x)?;
+    let pairs = detect_files(path)?;
 
-    let empty_plan = EmitPlan {
-        files: vec![],
-        diagnostics: vec![],
-    };
-    let report = build_report(&ir, &empty_plan);
+    for (kind, file_path) in &pairs {
+        // Infer direction from the individual file path so that Codex-origin
+        // files are lifted with X2c and their dropped fields are reported.
+        let dir = infer_conv_dir(file_path.to_str().unwrap_or(""));
+        let handler = pick_handler(kind, &maps);
+        let parsed = match handler.parse(file_path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("warning: skipping {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+        let ir = match handler.lift(&parsed, dir) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("warning: skipping {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
 
-    println!("check: {}", path);
-    println!(
-        "  dropped: {}, degraded: {}, lossy: {}, lossless: {}",
-        report.dropped.len(),
-        report.degraded.len(),
-        report.lossy.len(),
-        report.lossless.len()
-    );
+        let empty_plan = EmitPlan {
+            files: vec![],
+            diagnostics: vec![],
+        };
+        let report = build_report(&ir, &empty_plan);
 
-    if !report.dropped.is_empty() {
-        println!("  Dropped fields:");
-        for d in &report.dropped {
-            let id = d.id.as_deref().unwrap_or("?");
-            println!("    - {} : {}", id, d.message);
+        println!("check: {}", file_path.display());
+        println!(
+            "  dropped: {}, degraded: {}, lossy: {}, lossless: {}",
+            report.dropped.len(),
+            report.degraded.len(),
+            report.lossy.len(),
+            report.lossless.len()
+        );
+
+        if !report.dropped.is_empty() {
+            println!("  Dropped fields:");
+            for d in &report.dropped {
+                let id = d.id.as_deref().unwrap_or("?");
+                println!("    - {} : {}", id, d.message);
+            }
         }
-    }
 
-    if !report.body_warnings.is_empty() {
-        println!("  Body warnings: {}", report.body_warnings.len());
+        if !report.body_warnings.is_empty() {
+            println!("  Body warnings: {}", report.body_warnings.len());
+        }
     }
 
     Ok(())
@@ -174,6 +320,7 @@ fn run_check(path: &str) -> anyhow::Result<()> {
 fn build_lower_opts(opts: &ConvertOpts) -> LowerOpts {
     LowerOpts {
         out: opts.out.clone(),
+        only: opts.only.clone(),
         scope: opts
             .scope
             .as_deref()
@@ -192,6 +339,7 @@ fn build_lower_opts(opts: &ConvertOpts) -> LowerOpts {
             .unwrap_or(SkillTargetMode::Auto),
         interactive: opts.interactive,
         rewrite_body: opts.rewrite_body,
+        keep_claude_frontmatter: opts.keep_claude_frontmatter,
     }
 }
 
@@ -322,3 +470,37 @@ fn parse_skill_target_mode(s: &str) -> SkillTargetMode {
 }
 
 use anyhow::Context;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_infer_conv_dir_codex_files() {
+        assert_eq!(infer_conv_dir("config.toml"), ConvDir::X2c);
+        assert_eq!(infer_conv_dir("/some/path/config.toml"), ConvDir::X2c);
+        assert_eq!(infer_conv_dir("AGENTS.md"), ConvDir::X2c);
+        assert_eq!(infer_conv_dir("/project/AGENTS.md"), ConvDir::X2c);
+        assert_eq!(infer_conv_dir("AGENTS.override.md"), ConvDir::X2c);
+        assert_eq!(
+            infer_conv_dir("/project/.agents/skills/foo/SKILL.md"),
+            ConvDir::X2c
+        );
+        assert_eq!(
+            infer_conv_dir("/project/.codex/agents/foo.toml"),
+            ConvDir::X2c
+        );
+    }
+
+    #[test]
+    fn test_infer_conv_dir_claude_files() {
+        assert_eq!(infer_conv_dir("CLAUDE.md"), ConvDir::C2x);
+        assert_eq!(infer_conv_dir(".mcp.json"), ConvDir::C2x);
+        assert_eq!(infer_conv_dir("settings.json"), ConvDir::C2x);
+        assert_eq!(
+            infer_conv_dir("/project/.claude/skills/foo/SKILL.md"),
+            ConvDir::C2x
+        );
+        assert_eq!(infer_conv_dir("hooks.json"), ConvDir::C2x);
+    }
+}

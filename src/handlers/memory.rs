@@ -146,11 +146,23 @@ impl Handler for MemoryHandler {
             });
         }
 
-        // c2x: @import 構文の検出
+        // c2x: @import 構文の検出（コードフェンス内の @ は除外）
         if dir == ConvDir::C2x {
-            let has_imports = body
-                .lines()
-                .any(|line| !in_code_block(line, &body) && line.trim_start().starts_with('@'));
+            let has_imports = {
+                let mut in_fence = false;
+                let mut found = false;
+                for line in body.lines() {
+                    if line.trim_start().starts_with("```") {
+                        in_fence = !in_fence;
+                        continue;
+                    }
+                    if !in_fence && line.trim_start().starts_with('@') {
+                        found = true;
+                        break;
+                    }
+                }
+                found
+            };
             if has_imports {
                 node.fields.insert(
                     "memory.import-syntax".to_string(),
@@ -204,7 +216,7 @@ impl Handler for MemoryHandler {
 impl MemoryHandler {
     /// c2x: CLAUDE.md → AGENTS.md（@import インライン展開あり）
     fn lower_c2x(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
-        let mut diagnostics = ir.diagnostics.clone();
+        let mut diagnostics = Vec::new();
         let out_root = opts.out.as_deref().unwrap_or(".");
 
         // dropped ファイルは skip
@@ -267,7 +279,7 @@ impl MemoryHandler {
 
     /// x2c: AGENTS.md → CLAUDE.md（パス付け替えのみ）
     fn lower_x2c(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
-        let diagnostics = ir.diagnostics.clone();
+        let diagnostics = Vec::new();
         let out_root = opts.out.as_deref().unwrap_or(".");
 
         let body = ir
@@ -428,11 +440,6 @@ fn inline_imports(
     result
 }
 
-/// コードブロック内判定のスタブ（inline_imports 内で状態追跡するため常に false）。
-fn in_code_block(_line: &str, _full_body: &str) -> bool {
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,12 +457,14 @@ mod tests {
     fn default_opts(out_dir: &str) -> LowerOpts {
         LowerOpts {
             out: Some(out_dir.to_string()),
+            only: vec![],
             scope: crate::handlers::Scope::Project,
             dual_manifest: false,
             hooks_target: crate::handlers::Scope::User,
             skill_target: crate::handlers::SkillTargetMode::Skill,
             interactive: false,
             rewrite_body: false,
+            keep_claude_frontmatter: false,
         }
     }
 
@@ -657,8 +666,15 @@ mod tests {
         let parsed = h.parse(&claude_md).unwrap();
         let ir = h.lift(&parsed, ConvDir::C2x).unwrap();
 
-        // Should NOT detect imports (inside code block)
-        // Note: our simple parser uses line-by-line tracking so it won't expand within code fences
+        // lift() must NOT flag @-lines inside code fences as imports — the IR
+        // should contain no "memory.import-syntax" field.
+        assert!(
+            !ir.fields.contains_key("memory.import-syntax"),
+            "lift() must not flag @-lines inside code blocks as imports; \
+             IR fields: {:?}",
+            ir.fields.keys().collect::<Vec<_>>()
+        );
+
         let opts = default_opts(out_dir.path().to_str().unwrap());
         let plan = h.lower(&ir, ConvDir::C2x, &opts).unwrap();
 
@@ -667,7 +683,7 @@ mod tests {
             .iter()
             .find(|f| f.path.ends_with("AGENTS.md"))
             .unwrap();
-        // @some/file.md inside code block should remain as-is
+        // @some/file.md inside code block should remain as-is in the output
         assert!(
             agents_md.content.contains("@some/file.md"),
             "Expected @import in code block to be preserved"

@@ -189,12 +189,16 @@ fn is_pseudo_field(field: &str) -> bool {
     field.starts_with('\u{FF08}') // '（'
 }
 
-/// lift 時に「このフィールドはどの id か」を引く索引を構築する。
-/// ConvDir::C2x（Claude→Codex）なら claude フィールド名、
-/// ConvDir::X2c（Codex→Claude）なら codex フィールド名で索引。
+/// Builds a lookup index from claude field name → MapEntry for the C2x lift direction.
+///
+/// Entries whose direction excludes C2x are skipped so they cannot shadow
+/// direction-compatible entries that share the same claude field name.
 pub fn index_by_claude_field(dm: &DomainMap) -> HashMap<String, &MapEntry> {
     let mut idx = HashMap::new();
     for entry in &dm.entries {
+        if !applies_direction(entry, ConvDir::C2x) {
+            continue;
+        }
         if let Some(spec) = &entry.claude {
             if let Some(field) = &spec.field {
                 if !is_pseudo_field(field) {
@@ -206,9 +210,16 @@ pub fn index_by_claude_field(dm: &DomainMap) -> HashMap<String, &MapEntry> {
     idx
 }
 
+/// Builds a lookup index from codex field name → MapEntry for the X2c lift direction.
+///
+/// Entries whose direction excludes X2c are skipped so they cannot shadow
+/// direction-compatible entries that share the same codex field name.
 pub fn index_by_codex_field(dm: &DomainMap) -> HashMap<String, &MapEntry> {
     let mut idx = HashMap::new();
     for entry in &dm.entries {
+        if !applies_direction(entry, ConvDir::X2c) {
+            continue;
+        }
         if let Some(spec) = &entry.codex {
             if let Some(field) = &spec.field {
                 if !is_pseudo_field(field) {
@@ -301,6 +312,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// When two entries share the same claude.field but have different directions
+    /// (e.g. skills.disable-model-invocation=both and
+    /// skills.openai-yaml.allow_implicit_invocation=codex_to_claude both map
+    /// to claude field "disable-model-invocation"), index_by_claude_field must
+    /// return the entry that applies to C2x, not the one that doesn't.
+    #[test]
+    fn test_index_by_claude_field_direction_collision_c2x() {
+        let maps = load_mappings(Path::new("mappings"));
+        let skills_dm = &maps["skills"];
+        let idx = index_by_claude_field(skills_dm);
+        let entry = idx
+            .get("disable-model-invocation")
+            .expect("disable-model-invocation must be in index");
+        assert_eq!(
+            entry.id, "skills.disable-model-invocation",
+            "C2x index must resolve to the 'both' entry, not codex_to_claude"
+        );
+        assert!(
+            applies_direction(entry, ConvDir::C2x),
+            "Resolved entry must apply to C2x direction"
+        );
     }
 
     #[test]

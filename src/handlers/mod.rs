@@ -40,6 +40,8 @@ pub enum SkillTargetMode {
 pub struct LowerOpts {
     /// 出力先ディレクトリ（省略時: *.converted/ サブディレクトリ）
     pub out: Option<String>,
+    /// 変換対象ドメインのフィルタ（空のとき全ドメイン対象）
+    pub only: Vec<String>,
     /// 降格先スコープ（.rules / agents の配置）
     pub scope: Scope,
     /// plugin で .claude-plugin/ を残し .codex-plugin/ を追加生成
@@ -52,6 +54,8 @@ pub struct LowerOpts {
     pub interactive: bool,
     /// 本文の変数/記法を自動書き換え（既定: false = 検出のみ）
     pub rewrite_body: bool,
+    /// Claude 固有 frontmatter キーを Codex 出力に残置する（Codex は fail-open で無視）
+    pub keep_claude_frontmatter: bool,
 }
 
 /// handler.lower() が返す出力計画。

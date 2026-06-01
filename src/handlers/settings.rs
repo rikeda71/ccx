@@ -581,7 +581,7 @@ impl SettingsHandler {
     /// c2x lower: produce Codex config.toml / rules files from IR.
     fn lower_c2x(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
         let mut files = Vec::new();
-        let mut diagnostics = ir.diagnostics.clone();
+        let mut diagnostics = Vec::new();
         let out_root = opts.out.as_deref().unwrap_or(".");
 
         // Build TOML document
@@ -746,6 +746,9 @@ impl SettingsHandler {
             network_domains = json_to_string_list(&f.value);
         }
 
+        // permissions.deny WebFetch domains → [permissions.default].network.domains (deny)
+        let mut network_deny_domains: Vec<String> = Vec::new();
+
         // permissions.allow/deny/ask → split by tool type
         if let Some(f) = ir.fields.get("__permissions.allow") {
             let tools = json_to_string_list(&f.value);
@@ -754,7 +757,7 @@ impl SettingsHandler {
 
             // Bash → .rules
             if !bash_tools.is_empty() {
-                let (arts, diags) = degrade_allowed_tools("default", &bash_tools, true);
+                let (arts, diags) = degrade_allowed_tools("default", &bash_tools, true, opts.scope);
                 for art in &arts {
                     files.push(EmitFile {
                         path: format!("{}/{}", out_root, art.path),
@@ -786,7 +789,8 @@ impl SettingsHandler {
                 split_permissions_by_type(&tools);
 
             if !bash_tools.is_empty() {
-                let (arts, diags) = degrade_allowed_tools("default", &bash_tools, false);
+                let (arts, diags) =
+                    degrade_allowed_tools("default", &bash_tools, false, opts.scope);
                 for art in &arts {
                     files.push(EmitFile {
                         path: format!("{}/{}", out_root, art.path),
@@ -805,7 +809,18 @@ impl SettingsHandler {
             for path_str in fs_deny_read.into_iter().chain(fs_deny_write) {
                 fs_perms.push((path_str, "deny"));
             }
-            let _ = web_deny_domains; // handled via filesystem deny approximation
+            for d in web_deny_domains {
+                network_deny_domains.push(d);
+            }
+            if !network_deny_domains.is_empty() {
+                diagnostics.push(Diagnostic {
+                    level: DiagLevel::Warn,
+                    id: Some("settings.permissions.deny.webfetch".to_string()),
+                    message:
+                        "permissions.deny WebFetch domains → [permissions.default].network.domains (deny)"
+                            .to_string(),
+                });
+            }
         }
 
         if let Some(f) = ir.fields.get("__permissions.ask") {
@@ -847,7 +862,7 @@ impl SettingsHandler {
         }
 
         // Write permissions table to TOML
-        if !fs_perms.is_empty() || !network_domains.is_empty() {
+        if !fs_perms.is_empty() || !network_domains.is_empty() || !network_deny_domains.is_empty() {
             let perms_item = doc
                 .entry("permissions")
                 .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
@@ -874,7 +889,7 @@ impl SettingsHandler {
                     }
 
                     // network
-                    if !network_domains.is_empty() {
+                    if !network_domains.is_empty() || !network_deny_domains.is_empty() {
                         let net_item = dtbl
                             .entry("network")
                             .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
@@ -887,13 +902,18 @@ impl SettingsHandler {
                                 for domain in &network_domains {
                                     dom_tbl.insert(domain, toml_edit::value("allow"));
                                 }
+                                for domain in &network_deny_domains {
+                                    dom_tbl.insert(domain, toml_edit::value("deny"));
+                                }
                             }
                         }
-                        diagnostics.push(Diagnostic {
-                            level: DiagLevel::Warn,
-                            id: Some("settings.sandbox.network.allowedDomains".to_string()),
-                            message: "network domains → [permissions.default].network.domains (network.enabled=true added)".to_string(),
-                        });
+                        if !network_domains.is_empty() {
+                            diagnostics.push(Diagnostic {
+                                level: DiagLevel::Warn,
+                                id: Some("settings.sandbox.network.allowedDomains".to_string()),
+                                message: "network domains → [permissions.default].network.domains (network.enabled=true added)".to_string(),
+                            });
+                        }
                     }
                 }
             }
@@ -923,7 +943,7 @@ impl SettingsHandler {
     /// x2c lower: produce Claude settings.json from Codex config.toml IR.
     fn lower_x2c(&self, ir: &IRNode, opts: &LowerOpts) -> anyhow::Result<EmitPlan> {
         let mut files = Vec::new();
-        let mut diagnostics = ir.diagnostics.clone();
+        let mut diagnostics = Vec::new();
         let out_root = opts.out.as_deref().unwrap_or(".");
 
         let mut settings = serde_json::Map::new();
@@ -1007,6 +1027,29 @@ impl SettingsHandler {
                 path: format!("{}/.claude/settings.json", out_root),
                 content: json_content,
             });
+        }
+
+        // developer_instructions → CLAUDE.md (degrade: scope fixed to project)
+        if let Some(f) = ir.fields.get("settings.codex.developer_instructions") {
+            if let Some(text) = f.value.as_str() {
+                let claude_md_content = format!(
+                    "# Developer Instructions\n\n\
+                     <!-- Converted from Codex developer_instructions (lossy: scope fixed to project) -->\n\n\
+                     {}\n",
+                    text
+                );
+                files.push(EmitFile {
+                    path: format!("{}/.claude/CLAUDE.md", out_root),
+                    content: claude_md_content,
+                });
+                diagnostics.push(Diagnostic {
+                    level: DiagLevel::Warn,
+                    id: Some("settings.codex.developer_instructions".to_string()),
+                    message:
+                        "developer_instructions degraded to CLAUDE.md (lossy: scope fixed to project)"
+                            .to_string(),
+                });
+            }
         }
 
         // Warn about remainder
@@ -1132,12 +1175,14 @@ mod tests {
     fn default_opts(out_dir: &str) -> LowerOpts {
         LowerOpts {
             out: Some(out_dir.to_string()),
+            only: vec![],
             scope: crate::handlers::Scope::Project,
             dual_manifest: false,
             hooks_target: crate::handlers::Scope::User,
             skill_target: crate::handlers::SkillTargetMode::Skill,
             interactive: false,
             rewrite_body: false,
+            keep_claude_frontmatter: false,
         }
     }
 
@@ -1392,6 +1437,142 @@ dangerously_allow_all_unix_sockets = false
         assert!(
             content.get("effortLevel").is_some(),
             "Expected effortLevel field"
+        );
+    }
+
+    #[test]
+    fn test_developer_instructions_produces_claude_md() {
+        let dir = TempDir::new().unwrap();
+        let config_path = dir.path().join("config.toml");
+        fs::write(
+            &config_path,
+            r#"
+model = "gpt-5-codex"
+developer_instructions = "Always respond in English. Focus on clear answers."
+"#,
+        )
+        .unwrap();
+
+        let out_dir = TempDir::new().unwrap();
+        let h = make_handler();
+        let parsed = h.parse(&config_path).unwrap();
+        let ir = h.lift(&parsed, ConvDir::X2c).unwrap();
+
+        // IR must contain the developer_instructions field with degrade info
+        assert!(
+            ir.fields
+                .contains_key("settings.codex.developer_instructions"),
+            "IR must contain settings.codex.developer_instructions"
+        );
+        let f = &ir.fields["settings.codex.developer_instructions"];
+        assert!(f.degrade.is_some(), "Field must have degrade info");
+        assert_eq!(
+            f.degrade.as_ref().unwrap().target,
+            "CLAUDE.md",
+            "Degrade target must be CLAUDE.md"
+        );
+
+        let opts = default_opts(out_dir.path().to_str().unwrap());
+        let plan = h.lower(&ir, ConvDir::X2c, &opts).unwrap();
+
+        // Plan must contain a file ending with CLAUDE.md
+        let claude_md = plan.files.iter().find(|f| f.path.ends_with("CLAUDE.md"));
+        assert!(
+            claude_md.is_some(),
+            "Plan must contain CLAUDE.md file; got: {:?}",
+            plan.files.iter().map(|f| &f.path).collect::<Vec<_>>()
+        );
+
+        // CLAUDE.md content must contain the original instruction text
+        let content = &claude_md.unwrap().content;
+        assert!(
+            content.contains("Always respond in English"),
+            "CLAUDE.md must contain original instruction text; got:\n{}",
+            content
+        );
+        assert!(
+            content.contains("Focus on clear answers"),
+            "CLAUDE.md must contain full instruction text; got:\n{}",
+            content
+        );
+
+        // A diagnostic with the correct id must be emitted
+        let has_diag = plan
+            .diagnostics
+            .iter()
+            .any(|d| d.id.as_deref() == Some("settings.codex.developer_instructions"));
+        assert!(
+            has_diag,
+            "Expected developer_instructions diagnostic in plan; got: {:?}",
+            plan.diagnostics
+                .iter()
+                .map(|d| d.id.as_deref().unwrap_or("<none>"))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_webfetch_deny_domains_in_config_toml_and_diagnostic() {
+        let dir = TempDir::new().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        fs::write(
+            &settings_path,
+            r#"{"permissions": {"deny": ["WebFetch(domain:bad.com)", "WebFetch(domain:evil.net)"]}}"#,
+        )
+        .unwrap();
+
+        let out_dir = TempDir::new().unwrap();
+        let h = make_handler();
+        let parsed = h.parse(&settings_path).unwrap();
+        let ir = h.lift(&parsed, ConvDir::C2x).unwrap();
+
+        let opts = default_opts(out_dir.path().to_str().unwrap());
+        let plan = h.lower(&ir, ConvDir::C2x, &opts).unwrap();
+
+        // config.toml must be generated
+        let config_toml = plan
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("config.toml"))
+            .expect("Expected config.toml output");
+
+        let content = &config_toml.content;
+
+        // bad.com and evil.net must appear with "deny"
+        assert!(
+            content.contains("bad.com") && content.contains("deny"),
+            "Expected bad.com = \"deny\" in config.toml; got:\n{}",
+            content
+        );
+        assert!(
+            content.contains("evil.net"),
+            "Expected evil.net in config.toml; got:\n{}",
+            content
+        );
+
+        // Warn diagnostic with id "settings.permissions.deny.webfetch" must exist
+        let has_diag = plan
+            .diagnostics
+            .iter()
+            .any(|d| d.id.as_deref() == Some("settings.permissions.deny.webfetch"));
+        assert!(
+            has_diag,
+            "Expected diagnostic id 'settings.permissions.deny.webfetch'; diagnostics: {:?}",
+            plan.diagnostics
+                .iter()
+                .map(|d| (d.id.as_deref().unwrap_or("<none>"), &d.message))
+                .collect::<Vec<_>>()
+        );
+
+        let diag = plan
+            .diagnostics
+            .iter()
+            .find(|d| d.id.as_deref() == Some("settings.permissions.deny.webfetch"))
+            .unwrap();
+        assert_eq!(
+            diag.level,
+            DiagLevel::Warn,
+            "Expected DiagLevel::Warn for settings.permissions.deny.webfetch"
         );
     }
 }
