@@ -136,3 +136,26 @@ jobs:
             exit 0
           fi
           cargo publish --locked
+
+  update-homebrew:
+    name: update-homebrew
+    needs: [check-version, release]
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # Dispatches a formula bump to rikeda71/homebrew-tap only when
+      # HOMEBREW_TAP_TOKEN is configured; otherwise the step is a no-op.
+      - name: Dispatch formula update to homebrew-tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping Homebrew formula update."
+            exit 0
+          fi
+          curl -fsSL -X POST \
+            -H "Authorization: token $HOMEBREW_TAP_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/rikeda71/homebrew-tap/dispatches \
+            -d "{\"event_type\":\"update-formula\",\"client_payload\":{\"formula\":\"cxbridge\",\"repo\":\"rikeda71/cxbridge\",\"version\":\"$VERSION\"}}"
