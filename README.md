@@ -1,6 +1,6 @@
-# ccx — Claude Code ⇄ Codex config converter
+# cxbridge — Claude Code ⇄ Codex config converter
 
-[![CI](https://github.com/rikeda71/ccx/actions/workflows/ci.yml/badge.svg)](https://github.com/rikeda71/ccx/actions/workflows/ci.yml)
+[![CI](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [日本語版 README](README.ja.md)
@@ -13,14 +13,14 @@ and without silently losing settings.
 Claude Code  .claude/ (JSON)   ⇄   Codex CLI  .codex/ (TOML)
 ```
 
-## Why ccx?
+## Why cxbridge?
 
 If you use both Claude Code and Codex, your two setups drift apart. You've built up
 skills, hooks, MCP servers, memory files, and subagents on one side and want them on
 the other — but the two tools use different directory layouts, different file formats
 (JSON vs TOML), and different feature sets.
 
-ccx translates between them in either direction. The hard part isn't copying files;
+cxbridge translates between them in either direction. The hard part isn't copying files;
 it's knowing what *doesn't* translate cleanly. So every run prints a **conversion
 report** that tells you exactly what came across losslessly, what was reshaped, what
 got moved to a broader scope, and what had no equivalent and was dropped. **Nothing is
@@ -32,7 +32,7 @@ across 8 domains). The CLI is just an engine that interprets them.
 ## At a glance
 
 ```sh
-$ ccx c2x .claude/skills/deploy/SKILL.md
+$ cxbridge c2x .claude/skills/deploy/SKILL.md
 
 ✔ skills/deploy/SKILL.md → .agents/skills/deploy/SKILL.md
   ◎ name, description                          lossless
@@ -64,39 +64,39 @@ Summary: 2 lossless, 3 lossy (2 degraded), 2 dropped, 1 body-warning
 **Prerequisites:** Rust 1.80+ (stable `cargo`).
 
 ```sh
-git clone https://github.com/rikeda71/ccx
-cd ccx
+git clone https://github.com/rikeda71/cxbridge
+cd cxbridge
 cargo build --release
-cp target/release/ccx ~/.local/bin/   # or anywhere on your PATH
+cp target/release/cxbridge ~/.local/bin/   # or anywhere on your PATH
 ```
 
-Pre-built binaries are published on the [Releases](https://github.com/rikeda71/ccx/releases) page.
+Pre-built binaries are published on the [Releases](https://github.com/rikeda71/cxbridge/releases) page.
 
 ## Usage
 
 ```sh
-ccx c2x <path>    # Claude → Codex
-ccx x2c <path>    # Codex → Claude
-ccx check <path>  # Diagnose convertibility without writing anything
+cxbridge c2x <path>    # Claude → Codex
+cxbridge x2c <path>    # Codex → Claude
+cxbridge check <path>  # Diagnose convertibility without writing anything
 ```
 
 `<path>` can be a single file or a directory (detected recursively).
 
 ```sh
 # Convert one Claude skill to Codex format
-ccx c2x .claude/skills/deploy/SKILL.md
+cxbridge c2x .claude/skills/deploy/SKILL.md
 
 # Preview a Codex → Claude conversion without touching disk
-ccx x2c .codex/config.toml --dry-run --report
+cxbridge x2c .codex/config.toml --dry-run --report
 
 # Diagnose an MCP config before converting
-ccx check .mcp.json
+cxbridge check .mcp.json
 
 # Fail the build if anything would be dropped (good for CI)
-ccx c2x .claude/skills/deploy/SKILL.md --strict
+cxbridge c2x .claude/skills/deploy/SKILL.md --strict
 
 # Machine-readable JSON report
-ccx c2x .mcp.json --dry-run --report=json
+cxbridge c2x .mcp.json --dry-run --report=json
 ```
 
 <details>
@@ -133,7 +133,7 @@ detail shown above. Each line is tagged with one symbol:
 | ✕ | **Dropped** — no conversion target; discarded (and reported) |
 | ⚠ | **Body warning** — a construct in the body needs manual review |
 
-`--strict` turns any dropped field into a non-zero exit (code 2), so you can wire ccx
+`--strict` turns any dropped field into a non-zero exit (code 2), so you can wire cxbridge
 into CI and refuse conversions that would quietly lose data.
 
 ## Documentation

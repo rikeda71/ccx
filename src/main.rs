@@ -1,3 +1,3 @@
 fn main() -> anyhow::Result<()> {
-    ccx::cli::run()
+    cxbridge::cli::run()
 }

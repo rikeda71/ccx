@@ -1,23 +1,23 @@
 [package]
-name = "ccx"
+name = "cxbridge"
 version = "0.1.0"
 edition = "2021"
 description = "Claude Code ⇄ Codex config file bidirectional conversion CLI"
 authors = ["Ryuya Ikeda <rikeda71@gmail.com>"]
 license = "MIT"
-repository = "https://github.com/rikeda71/ccx"
-homepage = "https://github.com/rikeda71/ccx"
-documentation = "https://github.com/rikeda71/ccx/blob/main/docs/spec.md"
+repository = "https://github.com/rikeda71/cxbridge"
+homepage = "https://github.com/rikeda71/cxbridge"
+documentation = "https://github.com/rikeda71/cxbridge/blob/main/docs/spec.md"
 readme = "README.md"
 keywords = ["claude-code", "codex", "config", "converter", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
-name = "ccx"
+name = "cxbridge"
 path = "src/main.rs"
 
 [lib]
-name = "ccx"
+name = "cxbridge"
 path = "src/lib.rs"
 
 [dependencies]

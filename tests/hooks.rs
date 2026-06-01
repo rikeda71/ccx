@@ -3,10 +3,10 @@ use common::*;
 
 use std::path::Path;
 
-use ccx::core::{
+use cxbridge::core::{
     detect::detect, mappings::load_mappings, report::build_report, transforms::ConvDir,
 };
-use ccx::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
+use cxbridge::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
 
 /// hooks.json c2x: common events are converted; Claude-only events are dropped.
 #[test]
@@ -20,7 +20,7 @@ fn test_hooks_c2x_basic() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(hooks_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Hooks);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Hooks);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -35,7 +35,7 @@ fn test_hooks_c2x_basic() {
     assert!(pre_tool_use.is_some(), "Expected PreToolUse field");
     assert_eq!(
         pre_tool_use.unwrap().loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "PreToolUse should be lossless"
     );
 
@@ -44,7 +44,7 @@ fn test_hooks_c2x_basic() {
     assert!(setup.is_some(), "Expected Setup field");
     assert_eq!(
         setup.unwrap().loss,
-        ccx::core::ir::Loss::Dropped,
+        cxbridge::core::ir::Loss::Dropped,
         "Setup should be dropped"
     );
 
@@ -199,11 +199,11 @@ fn test_hooks_c2x_matcher_alternation_normalized() {
 
     // Use hooks handler directly (not via fixture)
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = ccx::handlers::hooks::HooksHandler {
+    let handler = cxbridge::handlers::hooks::HooksHandler {
         map: maps["hooks"].clone(),
     };
 
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::Handler;
     let ir = handler.lift(&hooks_json, ConvDir::C2x).unwrap();
 
     let field = ir.fields.get("hooks.event.PostToolUse").unwrap();
@@ -236,7 +236,7 @@ fn test_hooks_x2c_flat_json_produces_events() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(hooks_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Hooks);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Hooks);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -255,7 +255,7 @@ fn test_hooks_x2c_flat_json_produces_events() {
     );
     assert_eq!(
         pre_tool.unwrap().loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "PreToolUse must be Lossless in x2c"
     );
 
@@ -263,7 +263,7 @@ fn test_hooks_x2c_flat_json_produces_events() {
     assert!(stop.is_some(), "Expected hooks.event.Stop in IR");
     assert_eq!(
         stop.unwrap().loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "Stop must be Lossless in x2c"
     );
 
@@ -350,8 +350,8 @@ fn test_hooks_x2c_flat_json_lower_produces_hooks_json() {
 /// the report, not two or three.
 #[test]
 fn test_hooks_c2x_claude_only_event_dropped_exactly_once() {
-    use ccx::handlers::hooks::HooksHandler;
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::hooks::HooksHandler;
+    use cxbridge::handlers::Handler;
 
     let hooks_json = serde_json::json!({
         "hooks": {
@@ -414,8 +414,8 @@ fn test_hooks_c2x_claude_only_event_dropped_exactly_once() {
 /// one lossy entry (the matcher warn), excluding the #16430 warning.
 #[test]
 fn test_hooks_c2x_exact_matcher_lossy_exactly_once() {
-    use ccx::handlers::hooks::HooksHandler;
-    use ccx::handlers::Handler;
+    use cxbridge::handlers::hooks::HooksHandler;
+    use cxbridge::handlers::Handler;
 
     let hooks_json = serde_json::json!({
         "hooks": {
@@ -481,7 +481,7 @@ fn test_event_with_all_hooks_dropped_not_in_lossless() {
     assert!(fixture.exists(), "Fixture {} must exist", fixture.display());
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Hooks, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Hooks, &maps);
 
     let parsed = handler.parse(fixture).expect("parse should succeed");
     let ir = handler
@@ -495,7 +495,7 @@ fn test_event_with_all_hooks_dropped_not_in_lossless() {
         .expect("hooks.event.PostToolUse must exist in IR");
     assert_eq!(
         field.loss,
-        ccx::core::ir::Loss::Dropped,
+        cxbridge::core::ir::Loss::Dropped,
         "hooks.event.PostToolUse must be Loss::Dropped when all hooks are dropped; got {:?}",
         field.loss
     );
@@ -544,7 +544,7 @@ fn test_event_with_surviving_hook_remains_lossless() {
     assert!(fixture.exists(), "Fixture {} must exist", fixture.display());
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Hooks, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Hooks, &maps);
 
     let parsed = handler.parse(fixture).expect("parse should succeed");
     let ir = handler
@@ -558,7 +558,7 @@ fn test_event_with_surviving_hook_remains_lossless() {
         .expect("hooks.event.Stop must exist in IR");
     assert_eq!(
         field.loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "hooks.event.Stop must remain Loss::Lossless when command hooks survive"
     );
 
@@ -592,7 +592,7 @@ fn test_hooks_args_report_section_is_dropped() {
     assert!(fixture.exists(), "Fixture {} must exist", fixture.display());
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Hooks, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Hooks, &maps);
 
     let parsed = handler.parse(fixture).expect("parse should succeed");
     let ir = handler
@@ -612,7 +612,7 @@ fn test_hooks_args_report_section_is_dropped() {
     for diag in &args_diags {
         assert_eq!(
             diag.level,
-            ccx::core::ir::DiagLevel::Drop,
+            cxbridge::core::ir::DiagLevel::Drop,
             "hooks.command.args diagnostic must be DiagLevel::Drop, got {:?}: {}",
             diag.level,
             diag.message
@@ -667,7 +667,7 @@ fn test_hooks_regex_matcher_no_warn_e2e() {
     assert!(fixture.exists(), "Fixture {} must exist", fixture.display());
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Hooks, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Hooks, &maps);
 
     let parsed = handler.parse(fixture).expect("parse should succeed");
     let ir = handler
@@ -680,7 +680,7 @@ fn test_hooks_regex_matcher_no_warn_e2e() {
         .iter()
         .filter(|d| {
             d.id.as_deref() == Some("hooks.matcher.regex")
-                && d.level == ccx::core::ir::DiagLevel::Warn
+                && d.level == cxbridge::core::ir::DiagLevel::Warn
         })
         .collect();
     assert!(
@@ -733,7 +733,7 @@ fn test_hooks_wildcard_matcher_id_e2e() {
     assert!(fixture.exists(), "Fixture {} must exist", fixture.display());
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Hooks, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Hooks, &maps);
 
     let parsed = handler.parse(fixture).expect("parse should succeed");
     let ir = handler

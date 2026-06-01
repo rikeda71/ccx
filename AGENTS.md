@@ -1,6 +1,6 @@
-# ccx — Contributor & Agent Guide
+# cxbridge — Contributor & Agent Guide
 
-**ccx** is a Rust CLI that bidirectionally converts configuration files between
+**cxbridge** is a Rust CLI that bidirectionally converts configuration files between
 Claude Code (`.claude/`, JSON) and OpenAI Codex CLI (`.codex/`, TOML).
 Conversion rules live in `mappings/*.yaml`; the CLI is an engine that interprets them.
 

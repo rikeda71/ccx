@@ -3,10 +3,10 @@ use common::*;
 
 use std::path::Path;
 
-use ccx::core::{
+use cxbridge::core::{
     detect::detect, mappings::load_mappings, report::build_report, transforms::ConvDir,
 };
-use ccx::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
+use cxbridge::handlers::{pick_handler, LowerOpts, Scope, SkillTargetMode};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Helpers local to this module (not hoisted to tests/common/mod.rs)
@@ -123,7 +123,7 @@ fn test_skill_c2x_check_reports_dropped() {
     );
 }
 
-/// Simulate the ccx check command: report the dropped count.
+/// Simulate the cxbridge check command: report the dropped count.
 #[test]
 fn test_check_skill_reports_dropped_count() {
     let skill_path = "tests/fixtures/claude/skills/deploy/SKILL.md";
@@ -738,7 +738,7 @@ fn test_scope_project_rules_path_is_project_relative() {
     let opts = opts_with_scope(out_dir.path().to_str().unwrap(), Scope::Project);
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Skill, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Skill, &maps);
     let parsed = handler.parse(&skill_path).unwrap();
     let ir = handler.lift(&parsed, ConvDir::C2x).unwrap();
     let plan = handler.lower(&ir, ConvDir::C2x, &opts).unwrap();
@@ -796,7 +796,7 @@ fn test_scope_user_rules_path_is_user_home() {
     let opts = opts_with_scope(out_dir.path().to_str().unwrap(), Scope::User);
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Skill, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Skill, &maps);
     let parsed = handler.parse(&skill_path).unwrap();
     let ir = handler.lift(&parsed, ConvDir::C2x).unwrap();
     let plan = handler.lower(&ir, ConvDir::C2x, &opts).unwrap();

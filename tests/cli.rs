@@ -4,16 +4,16 @@ use common::*;
 use std::path::Path;
 use std::process::Command;
 
-use ccx::cli::{default_out_dir, infer_conv_dir, write_plan};
-use ccx::core::{
+use cxbridge::cli::{default_out_dir, infer_conv_dir, write_plan};
+use cxbridge::core::{
     detect::detect_files,
     ir::{Diagnostic, Kind},
     mappings::load_mappings,
     report::build_report,
     transforms::ConvDir,
 };
-use ccx::degrade::rules::degrade_allowed_tools;
-use ccx::handlers::{pick_handler, EmitFile, EmitPlan, LowerOpts, Scope, SkillTargetMode};
+use cxbridge::degrade::rules::degrade_allowed_tools;
+use cxbridge::handlers::{pick_handler, EmitFile, EmitPlan, LowerOpts, Scope, SkillTargetMode};
 
 // ── cli_dir_input ────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ fn test_cli_c2x_directory_exits_zero_and_produces_skill_output() {
     )
     .unwrap();
 
-    let status = Command::new(ccx_bin())
+    let status = Command::new(cxbridge_bin())
         .args([
             "c2x",
             input_dir.path().to_str().unwrap(),
@@ -39,11 +39,11 @@ fn test_cli_c2x_directory_exits_zero_and_produces_skill_output() {
             out_dir.path().to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     assert!(
         status.success(),
-        "ccx c2x <dir> must exit 0, got: {}",
+        "cxbridge c2x <dir> must exit 0, got: {}",
         status
     );
 
@@ -74,14 +74,14 @@ fn test_cli_check_directory_exits_zero() {
     )
     .unwrap();
 
-    let output = Command::new(ccx_bin())
+    let output = Command::new(cxbridge_bin())
         .args(["check", input_dir.path().to_str().unwrap()])
         .output()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     assert!(
         output.status.success(),
-        "ccx check <dir> must exit 0, got: {}\nstdout: {}\nstderr: {}",
+        "cxbridge check <dir> must exit 0, got: {}\nstdout: {}\nstderr: {}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -103,7 +103,7 @@ fn test_cli_x2c_directory_exits_zero_and_produces_skill_output() {
     )
     .unwrap();
 
-    let status = Command::new(ccx_bin())
+    let status = Command::new(cxbridge_bin())
         .args([
             "x2c",
             input_dir.path().to_str().unwrap(),
@@ -111,11 +111,11 @@ fn test_cli_x2c_directory_exits_zero_and_produces_skill_output() {
             out_dir.path().to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     assert!(
         status.success(),
-        "ccx x2c <dir> must exit 0, got: {}",
+        "cxbridge x2c <dir> must exit 0, got: {}",
         status
     );
 
@@ -353,17 +353,17 @@ fn test_check_codex_config_toml_reports_dropped() {
     )
     .unwrap();
 
-    let output = Command::new(ccx_bin())
+    let output = Command::new(cxbridge_bin())
         .args(["check", config_path.to_str().unwrap()])
         .output()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
         output.status.success(),
-        "ccx check must exit 0\nstdout: {}\nstderr: {}",
+        "cxbridge check must exit 0\nstdout: {}\nstderr: {}",
         stdout,
         stderr
     );
@@ -394,17 +394,17 @@ fn test_check_agents_md_uses_x2c_direction() {
     let agents_path = dir.path().join("AGENTS.md");
     std::fs::write(&agents_path, "# Agent Instructions\n\nDo things.\n").unwrap();
 
-    let output = Command::new(ccx_bin())
+    let output = Command::new(cxbridge_bin())
         .args(["check", agents_path.to_str().unwrap()])
         .output()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
         output.status.success(),
-        "ccx check AGENTS.md must exit 0\nstdout: {}\nstderr: {}",
+        "cxbridge check AGENTS.md must exit 0\nstdout: {}\nstderr: {}",
         stdout,
         stderr
     );
@@ -621,7 +621,7 @@ fn test_no_report_flag_produces_no_stdout() {
     let out_dir = tempfile::TempDir::new().unwrap();
     make_skill_dir(&input_dir);
 
-    let output = Command::new(ccx_bin())
+    let output = Command::new(cxbridge_bin())
         .args([
             "c2x",
             input_dir.path().to_str().unwrap(),
@@ -629,11 +629,11 @@ fn test_no_report_flag_produces_no_stdout() {
             out_dir.path().to_str().unwrap(),
         ])
         .output()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     assert!(
         output.status.success(),
-        "ccx c2x must exit 0, got: {}\nstderr: {}",
+        "cxbridge c2x must exit 0, got: {}\nstderr: {}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
@@ -653,7 +653,7 @@ fn test_report_flag_without_value_prints_text_report() {
     let out_dir = tempfile::TempDir::new().unwrap();
     make_skill_dir(&input_dir);
 
-    let output = Command::new(ccx_bin())
+    let output = Command::new(cxbridge_bin())
         .args([
             "c2x",
             input_dir.path().to_str().unwrap(),
@@ -662,11 +662,11 @@ fn test_report_flag_without_value_prints_text_report() {
             "--report",
         ])
         .output()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     assert!(
         output.status.success(),
-        "ccx c2x --report must exit 0, got: {}\nstderr: {}",
+        "cxbridge c2x --report must exit 0, got: {}\nstderr: {}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
@@ -693,7 +693,7 @@ fn test_report_flag_json_prints_json_report() {
     let out_dir = tempfile::TempDir::new().unwrap();
     make_skill_dir(&input_dir);
 
-    let output = Command::new(ccx_bin())
+    let output = Command::new(cxbridge_bin())
         .args([
             "c2x",
             input_dir.path().to_str().unwrap(),
@@ -702,11 +702,11 @@ fn test_report_flag_json_prints_json_report() {
             "--report=json",
         ])
         .output()
-        .expect("failed to run ccx binary");
+        .expect("failed to run cxbridge binary");
 
     assert!(
         output.status.success(),
-        "ccx c2x --report=json must exit 0, got: {}\nstderr: {}",
+        "cxbridge c2x --report=json must exit 0, got: {}\nstderr: {}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
@@ -973,8 +973,8 @@ fn test_c2x_directory_converts_all_files() {
 
     let pairs = detect_files(base.to_str().unwrap()).expect("detect_files should succeed");
 
-    let mut all_files: Vec<ccx::handlers::EmitFile> = Vec::new();
-    let mut all_diags: Vec<ccx::core::ir::Diagnostic> = Vec::new();
+    let mut all_files: Vec<cxbridge::handlers::EmitFile> = Vec::new();
+    let mut all_diags: Vec<cxbridge::core::ir::Diagnostic> = Vec::new();
 
     for (kind, file_path) in &pairs {
         let handler = pick_handler(kind, &maps);
@@ -1433,7 +1433,7 @@ fn infer_conv_dir_recognises_relative_codex_paths() {
     assert_eq!(infer_conv_dir("CLAUDE.md"), ConvDir::C2x);
 }
 
-fn config_toml_artifacts(artifacts: &[ccx::core::ir::SideArtifact]) -> String {
+fn config_toml_artifacts(artifacts: &[cxbridge::core::ir::SideArtifact]) -> String {
     artifacts
         .iter()
         .filter(|a| a.path == "config.toml")
@@ -1487,7 +1487,7 @@ fn dry_run_prints_report_default_is_quiet() {
     );
     let out = tempfile::TempDir::new().unwrap();
 
-    let dry = std::process::Command::new(env!("CARGO_BIN_EXE_ccx"))
+    let dry = std::process::Command::new(env!("CARGO_BIN_EXE_cxbridge"))
         .args([
             "c2x",
             skill,
@@ -1505,7 +1505,7 @@ fn dry_run_prints_report_default_is_quiet() {
 
     // Default run (no --report, no --dry-run) stays quiet on stdout.
     let out2 = tempfile::TempDir::new().unwrap();
-    let quiet = std::process::Command::new(env!("CARGO_BIN_EXE_ccx"))
+    let quiet = std::process::Command::new(env!("CARGO_BIN_EXE_cxbridge"))
         .args(["c2x", skill, "--out", out2.path().to_str().unwrap()])
         .output()
         .unwrap();

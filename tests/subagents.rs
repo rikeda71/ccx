@@ -3,10 +3,10 @@ use common::*;
 
 use std::path::Path;
 
-use ccx::core::{
+use cxbridge::core::{
     detect::detect, mappings::load_mappings, report::build_report, transforms::ConvDir,
 };
-use ccx::handlers::pick_handler;
+use cxbridge::handlers::pick_handler;
 
 /// Claude agents/<n>.md c2x: .codex/agents/<n>.toml is generated.
 #[test]
@@ -22,7 +22,7 @@ fn test_subagent_c2x_generates_codex_toml() {
     let kind = detect(agent_path).expect("detect should succeed");
     assert_eq!(
         kind,
-        ccx::core::ir::Kind::Subagent,
+        cxbridge::core::ir::Kind::Subagent,
         "agents/<n>.md should be Kind::Subagent"
     );
 
@@ -34,7 +34,7 @@ fn test_subagent_c2x_generates_codex_toml() {
         .lift(&parsed, ConvDir::C2x)
         .expect("lift should succeed");
 
-    assert_eq!(ir.kind, ccx::core::ir::Kind::Subagent);
+    assert_eq!(ir.kind, cxbridge::core::ir::Kind::Subagent);
     assert!(ir.fields.contains_key("subagents.name"));
     assert!(ir.fields.contains_key("subagents.description"));
 
@@ -42,7 +42,7 @@ fn test_subagent_c2x_generates_codex_toml() {
     let name_f = &ir.fields["subagents.name"];
     assert_eq!(
         name_f.loss,
-        ccx::core::ir::Loss::Lossless,
+        cxbridge::core::ir::Loss::Lossless,
         "name should be lossless"
     );
     assert_eq!(
@@ -54,7 +54,7 @@ fn test_subagent_c2x_generates_codex_toml() {
     let model_f = &ir.fields["subagents.model"];
     assert_eq!(
         model_f.loss,
-        ccx::core::ir::Loss::Lossy,
+        cxbridge::core::ir::Loss::Lossy,
         "model should be lossy"
     );
 
@@ -69,7 +69,7 @@ fn test_subagent_c2x_generates_codex_toml() {
     let max_turns = &ir.fields["subagents.maxTurns"];
     assert_eq!(
         max_turns.loss,
-        ccx::core::ir::Loss::Dropped,
+        cxbridge::core::ir::Loss::Dropped,
         "maxTurns should be dropped"
     );
 
@@ -77,7 +77,7 @@ fn test_subagent_c2x_generates_codex_toml() {
     let bg = &ir.fields["subagents.background"];
     assert_eq!(
         bg.loss,
-        ccx::core::ir::Loss::Dropped,
+        cxbridge::core::ir::Loss::Dropped,
         "background should be dropped"
     );
 
@@ -85,7 +85,7 @@ fn test_subagent_c2x_generates_codex_toml() {
     let color = &ir.fields["subagents.color"];
     assert_eq!(
         color.loss,
-        ccx::core::ir::Loss::Dropped,
+        cxbridge::core::ir::Loss::Dropped,
         "color should be dropped"
     );
 
@@ -138,7 +138,7 @@ fn test_subagent_x2c_generates_claude_md() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(agent_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Subagent);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Subagent);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -148,7 +148,7 @@ fn test_subagent_x2c_generates_claude_md() {
         .lift(&parsed, ConvDir::X2c)
         .expect("lift should succeed");
 
-    assert_eq!(ir.kind, ccx::core::ir::Kind::Subagent);
+    assert_eq!(ir.kind, cxbridge::core::ir::Kind::Subagent);
 
     let out_dir = tempfile::TempDir::new().unwrap();
     let opts = default_lower_opts_skill(out_dir.path().to_str().unwrap());
@@ -305,7 +305,7 @@ fn test_subagent_x2c_skills_lifted_integration() {
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
     let kind = detect(agent_path).expect("detect should succeed");
-    assert_eq!(kind, ccx::core::ir::Kind::Subagent);
+    assert_eq!(kind, cxbridge::core::ir::Kind::Subagent);
 
     let handler = pick_handler(&kind, &maps);
     let parsed = handler
@@ -326,7 +326,7 @@ fn test_subagent_x2c_skills_lifted_integration() {
     let has_unknown_drop = ir
         .diagnostics
         .iter()
-        .any(|d| d.level == ccx::core::ir::DiagLevel::Drop && d.message.contains("skills"));
+        .any(|d| d.level == cxbridge::core::ir::DiagLevel::Drop && d.message.contains("skills"));
     assert!(
         !has_unknown_drop,
         "Must not drop 'skills' as unknown key; diagnostics: {:?}",
@@ -369,7 +369,8 @@ fn test_subagent_x2c_skills_lifted_integration() {
 
     // A Warn diagnostic for the lossy skills mapping must be emitted
     let has_skills_warn = plan.diagnostics.iter().any(|d| {
-        d.id.as_deref() == Some("subagents.skills") && d.level == ccx::core::ir::DiagLevel::Warn
+        d.id.as_deref() == Some("subagents.skills")
+            && d.level == cxbridge::core::ir::DiagLevel::Warn
     });
     assert!(
         has_skills_warn,
@@ -550,7 +551,7 @@ fn test_subagent_c2x_permission_mode_accept_edits_dropped() {
     // A drop diagnostic for subagents.permissionMode must be in plan.diagnostics.
     let has_drop_diag = plan.diagnostics.iter().any(|d| {
         d.id.as_deref() == Some("subagents.permissionMode")
-            && d.level == ccx::core::ir::DiagLevel::Drop
+            && d.level == cxbridge::core::ir::DiagLevel::Drop
     });
     assert!(
         has_drop_diag,
@@ -614,7 +615,7 @@ fn test_subagent_c2x_permission_mode_dont_ask_and_auto_dropped() {
 
         let has_drop_diag = plan.diagnostics.iter().any(|d| {
             d.id.as_deref() == Some("subagents.permissionMode")
-                && d.level == ccx::core::ir::DiagLevel::Drop
+                && d.level == cxbridge::core::ir::DiagLevel::Drop
         });
         assert!(
             has_drop_diag,
@@ -639,7 +640,7 @@ fn test_subagents_dropped_warn_fields_appear_once_in_dropped() {
     );
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Subagent, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Subagent, &maps);
 
     let parsed = handler.parse(fixture).expect("parse should succeed");
     let ir = handler
@@ -691,7 +692,7 @@ fn test_subagents_dropped_warn_fields_not_in_lossy() {
     );
 
     let maps = load_mappings(Path::new(MAPPINGS_DIR));
-    let handler = pick_handler(&ccx::core::ir::Kind::Subagent, &maps);
+    let handler = pick_handler(&cxbridge::core::ir::Kind::Subagent, &maps);
 
     let parsed = handler.parse(fixture).expect("parse should succeed");
     let ir = handler

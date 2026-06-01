@@ -1,6 +1,6 @@
-# ccx — Claude Code ⇄ Codex 設定変換 CLI
+# cxbridge — Claude Code ⇄ Codex 設定変換 CLI
 
-[![CI](https://github.com/rikeda71/ccx/actions/workflows/ci.yml/badge.svg)](https://github.com/rikeda71/ccx/actions/workflows/ci.yml)
+[![CI](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/rikeda71/cxbridge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [English README](README.md)
@@ -12,13 +12,13 @@
 Claude Code  .claude/ (JSON)   ⇄   Codex CLI  .codex/ (TOML)
 ```
 
-## なぜ ccx か
+## なぜ cxbridge か
 
 Claude Code と Codex を両方使っていると、2 つの設定はだんだん食い違っていきます。片方で
 skills・hooks・MCP サーバー・メモリファイル・subagents を作り込んだあと、それをもう片方でも
 使いたい。しかし両者はディレクトリ構成もファイル形式（JSON / TOML）も対応機能も異なります。
 
-ccx は両者をどちらの向きにも変換します。難しいのはファイルをコピーすることではなく、「何が
+cxbridge は両者をどちらの向きにも変換します。難しいのはファイルをコピーすることではなく、「何が
 きれいには変換できないか」を把握することです。そこで実行のたびに **conversion report** を出力し、
 完全等価で移せたもの・形を変えて移したもの・より広いスコープへ移したもの・対応先がなく破棄した
 ものを正確に示します。**サイレントな損失は決して起こしません。**
@@ -29,7 +29,7 @@ CLI はそれを解釈するエンジンに過ぎません。
 ## ひと目で
 
 ```sh
-$ ccx c2x .claude/skills/deploy/SKILL.md
+$ cxbridge c2x .claude/skills/deploy/SKILL.md
 
 ✔ skills/deploy/SKILL.md → .agents/skills/deploy/SKILL.md
   ◎ name, description                          lossless
@@ -61,39 +61,39 @@ Summary: 2 lossless, 3 lossy (2 degraded), 2 dropped, 1 body-warning
 **事前要件:** Rust 1.80 以上（stable の `cargo`）。
 
 ```sh
-git clone https://github.com/rikeda71/ccx
-cd ccx
+git clone https://github.com/rikeda71/cxbridge
+cd cxbridge
 cargo build --release
-cp target/release/ccx ~/.local/bin/   # PATH の通った場所へ
+cp target/release/cxbridge ~/.local/bin/   # PATH の通った場所へ
 ```
 
-ビルド済みバイナリは [Releases](https://github.com/rikeda71/ccx/releases) ページで配布しています。
+ビルド済みバイナリは [Releases](https://github.com/rikeda71/cxbridge/releases) ページで配布しています。
 
 ## 使い方
 
 ```sh
-ccx c2x <path>    # Claude → Codex
-ccx x2c <path>    # Codex → Claude
-ccx check <path>  # 変換可能性を診断（書き込まない）
+cxbridge c2x <path>    # Claude → Codex
+cxbridge x2c <path>    # Codex → Claude
+cxbridge check <path>  # 変換可能性を診断（書き込まない）
 ```
 
 `<path>` にはファイルまたはディレクトリ（再帰検出）を指定します。
 
 ```sh
 # Claude の skill を Codex 形式へ変換
-ccx c2x .claude/skills/deploy/SKILL.md
+cxbridge c2x .claude/skills/deploy/SKILL.md
 
 # Codex → Claude をディスクに触れずプレビュー
-ccx x2c .codex/config.toml --dry-run --report
+cxbridge x2c .codex/config.toml --dry-run --report
 
 # .mcp.json を変換前に診断
-ccx check .mcp.json
+cxbridge check .mcp.json
 
 # dropped が出たらビルドを失敗させる（CI 向け）
-ccx c2x .claude/skills/deploy/SKILL.md --strict
+cxbridge c2x .claude/skills/deploy/SKILL.md --strict
 
 # 機械可読な JSON レポート
-ccx c2x .mcp.json --dry-run --report=json
+cxbridge c2x .mcp.json --dry-run --report=json
 ```
 
 <details>
