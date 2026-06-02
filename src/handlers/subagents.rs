@@ -3,15 +3,9 @@ use std::path::Path;
 use anyhow::Context;
 use serde_json::Value;
 
-use crate::core::ir::{
-    new_node, DegradeInfo, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind, Loss, Tool,
-};
-use crate::core::mappings::{
-    applies_direction, index_by_claude_field, index_by_codex_field, DomainMap,
-};
-use crate::core::transforms::{
-    apply_transforms, claude_tier, tier_to_codex, ConvDir, TransformCtx,
-};
+use crate::core::ir::{new_node, DiagLevel, Diagnostic, IRNode, Kind, Tool};
+use crate::core::mappings::{index_by_claude_field, index_by_codex_field, DomainMap};
+use crate::core::transforms::{claude_tier, tier_to_codex, ConvDir};
 use crate::handlers::{EmitFile, EmitPlan, Handler, LowerOpts};
 
 /// Handler for the subagents domain.
@@ -97,7 +91,7 @@ impl Handler for SubagentHandler {
         };
 
         for (key, value) in frontmatter {
-            let Some(entry) = idx.get(key.as_str()) else {
+            let Some(&entry) = idx.get(key.as_str()) else {
                 node.diagnostics.push(Diagnostic {
                     level: DiagLevel::Drop,
                     id: None,
@@ -106,57 +100,7 @@ impl Handler for SubagentHandler {
                 continue;
             };
 
-            if !applies_direction(entry, dir) {
-                continue;
-            }
-
-            let ctx = TransformCtx {
-                direction: dir,
-                args: None,
-                field: entry,
-            };
-            let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
-
-            let loss = Loss::from(&entry.loss);
-
-            let degrade_info = entry.degrade.as_ref().map(|d| DegradeInfo {
-                to: d.to.clone(),
-                target: d.target.clone(),
-            });
-
-            let dropped_info = if matches!(loss, Loss::Dropped) {
-                Some(DroppedInfo {
-                    reason: entry
-                        .notes
-                        .clone()
-                        .unwrap_or_else(|| format!("{key} has no equivalent")),
-                })
-            } else {
-                None
-            };
-
-            let warning = if entry.warn == Some(true) {
-                Some(format!(
-                    "{}: {}",
-                    entry.id,
-                    entry.notes.as_deref().unwrap_or("warn")
-                ))
-            } else {
-                None
-            };
-
-            node.fields.insert(
-                entry.id.clone(),
-                IRField {
-                    id: entry.id.clone(),
-                    value: v,
-                    loss,
-                    transforms_applied: applied,
-                    degrade: degrade_info,
-                    warning: warning.clone(),
-                    dropped: dropped_info,
-                },
-            );
+            crate::handlers::lift_mapped_field(entry, key, value, dir, &mut node);
         }
 
         // body: for c2x, the Markdown body is the system prompt content
@@ -630,6 +574,7 @@ fn approximate_sandbox_mode(tools: &[String]) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::ir::Loss;
     use crate::core::mappings::load_mappings;
     use std::fs;
     use tempfile::TempDir;

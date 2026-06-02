@@ -4,13 +4,12 @@ use anyhow::Context;
 use serde_json::Value;
 
 use crate::core::ir::{
-    new_node, BodySegment, DegradeInfo, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind,
-    Loss, SideArtifact, Tool,
+    new_node, BodySegment, DiagLevel, Diagnostic, IRField, IRNode, Kind, Loss, SideArtifact, Tool,
 };
 use crate::core::mappings::{
     applies_direction, index_by_claude_field, index_by_codex_field, DomainMap,
 };
-use crate::core::transforms::{apply_transforms, ConvDir, TransformCtx};
+use crate::core::transforms::ConvDir;
 use crate::degrade::rules::degrade_allowed_tools;
 use crate::degrade::subagent::{decide_skill_target, degrade_to_subagent, SkillTarget};
 use crate::handlers::{EmitFile, EmitPlan, Handler, LowerOpts};
@@ -60,7 +59,7 @@ impl Handler for SkillsHandler {
         node.raw_frontmatter = Some(frontmatter.clone());
 
         for (key, value) in frontmatter {
-            let Some(entry) = idx.get(key.as_str()) else {
+            let Some(&entry) = idx.get(key.as_str()) else {
                 node.diagnostics.push(Diagnostic {
                     level: DiagLevel::Drop,
                     id: None,
@@ -69,73 +68,7 @@ impl Handler for SkillsHandler {
                 continue;
             };
 
-            if !applies_direction(entry, dir) {
-                continue;
-            }
-
-            let ctx = TransformCtx {
-                direction: dir,
-                args: None,
-                field: entry,
-            };
-            let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
-
-            let loss = Loss::from(&entry.loss);
-
-            let degrade_info = entry.degrade.as_ref().map(|d| DegradeInfo {
-                to: d.to.clone(),
-                target: d.target.clone(),
-            });
-
-            let is_dropped = matches!(loss, Loss::Dropped);
-
-            let dropped_info = if is_dropped {
-                Some(DroppedInfo {
-                    reason: entry
-                        .notes
-                        .clone()
-                        .unwrap_or_else(|| format!("{} has no Codex equivalent", key)),
-                })
-            } else {
-                None
-            };
-
-            let warning = if entry.warn == Some(true) {
-                Some(format!(
-                    "{}: {}",
-                    entry.id,
-                    entry.notes.as_deref().unwrap_or("warn")
-                ))
-            } else {
-                None
-            };
-
-            node.fields.insert(
-                entry.id.clone(),
-                IRField {
-                    id: entry.id.clone(),
-                    value: v,
-                    loss,
-                    transforms_applied: applied,
-                    degrade: degrade_info,
-                    warning: warning.clone(),
-                    dropped: dropped_info,
-                },
-            );
-
-            // Only emit a Warn diagnostic for genuinely lossy fields.
-            // Dropped fields are already captured via IRField.dropped; pushing a
-            // Warn diagnostic for them causes build_report to route the entry to
-            // the lossy list as well, inflating summary counts.
-            if entry.warn == Some(true) && !is_dropped {
-                if let Some(msg) = &warning {
-                    node.diagnostics.push(Diagnostic {
-                        level: DiagLevel::Warn,
-                        id: Some(entry.id.clone()),
-                        message: msg.clone(),
-                    });
-                }
-            }
+            crate::handlers::lift_mapped_field(entry, key, value, dir, &mut node);
         }
 
         // x2c: process agents/openai.yaml when present

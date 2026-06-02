@@ -3,9 +3,79 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::core::ir::{Diagnostic, Kind};
-use crate::core::mappings::DomainMap;
-use crate::core::transforms::ConvDir;
+use crate::core::ir::{
+    DegradeInfo, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind, Loss,
+};
+use crate::core::mappings::{applies_direction, DomainMap, MapEntry};
+use crate::core::transforms::{apply_transforms, ConvDir, TransformCtx};
+
+/// Lifts a single mapped frontmatter/manifest field into `node` following the
+/// canonical sequence shared by the skills, subagents, and plugins handlers:
+/// direction filter → transforms → loss/degrade/dropped classification → field
+/// insertion → a single `Warn` diagnostic for genuinely lossy (non-dropped)
+/// `warn: true` fields.
+///
+/// Dropped fields are surfaced via `IRField.dropped`; emitting a `Warn` for them
+/// too would make `build_report` count them in the lossy list as well.
+pub(crate) fn lift_mapped_field(
+    entry: &MapEntry,
+    key: &str,
+    value: &Value,
+    dir: ConvDir,
+    node: &mut IRNode,
+) {
+    if !applies_direction(entry, dir) {
+        return;
+    }
+
+    let ctx = TransformCtx {
+        direction: dir,
+        args: None,
+        field: entry,
+    };
+    let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
+
+    let loss = Loss::from(&entry.loss);
+    let is_dropped = matches!(loss, Loss::Dropped);
+
+    let degrade_info = entry.degrade.as_ref().map(|d| DegradeInfo {
+        to: d.to.clone(),
+        target: d.target.clone(),
+    });
+
+    let dropped_info = is_dropped.then(|| DroppedInfo {
+        reason: entry
+            .notes
+            .clone()
+            .unwrap_or_else(|| format!("{key} has no equivalent")),
+    });
+
+    let warning = (entry.warn == Some(true))
+        .then(|| format!("{}: {}", entry.id, entry.notes.as_deref().unwrap_or("warn")));
+
+    node.fields.insert(
+        entry.id.clone(),
+        IRField {
+            id: entry.id.clone(),
+            value: v,
+            loss,
+            transforms_applied: applied,
+            degrade: degrade_info,
+            warning: warning.clone(),
+            dropped: dropped_info,
+        },
+    );
+
+    if !is_dropped {
+        if let Some(msg) = warning {
+            node.diagnostics.push(Diagnostic {
+                level: DiagLevel::Warn,
+                id: Some(entry.id.clone()),
+                message: msg,
+            });
+        }
+    }
+}
 
 pub mod hooks;
 pub mod mcp;
