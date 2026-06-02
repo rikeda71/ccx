@@ -41,6 +41,7 @@ Fine-grained rules are under `.claude/rules/` and are auto-loaded by context:
 | Area | Rule file |
 |---|---|
 | `src/**`, `tests/**` | `.claude/rules/rust.md`, `.claude/rules/code-style.md`, `.claude/rules/effective-rust.md` |
+| `src/handlers/**` | `.claude/rules/handler-modules.md` (directory-module layout) |
 | `mappings/**` | `.claude/rules/mappings.md` |
 | `docs/**` | `.claude/rules/docs.md` |
 
