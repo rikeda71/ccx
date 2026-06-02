@@ -3,11 +3,9 @@ use std::path::Path;
 use anyhow::Context;
 use serde_json::{Map, Value};
 
-use crate::core::ir::{
-    new_node, DiagLevel, Diagnostic, DroppedInfo, IRField, IRNode, Kind, Loss, SideArtifact, Tool,
-};
-use crate::core::mappings::{applies_direction, DomainMap};
-use crate::core::transforms::{apply_transforms, ConvDir, TransformCtx};
+use crate::core::ir::{new_node, DiagLevel, Diagnostic, IRNode, Kind, Loss, SideArtifact, Tool};
+use crate::core::mappings::DomainMap;
+use crate::core::transforms::ConvDir;
 use crate::handlers::{EmitFile, EmitPlan, Handler, LowerOpts};
 
 /// A path-remapped file discovered under `commands/` or `agents/` at a plugin root.
@@ -201,68 +199,7 @@ impl PluginsHandler {
             return;
         };
 
-        if !applies_direction(entry, dir) {
-            return;
-        }
-
-        let ctx = TransformCtx {
-            direction: dir,
-            args: None,
-            field: entry,
-        };
-        let (v, applied) = apply_transforms(value, entry.transform.as_deref(), &ctx);
-
-        let loss = Loss::from(&entry.loss);
-
-        let dropped_info = if matches!(loss, Loss::Dropped) {
-            Some(DroppedInfo {
-                reason: entry
-                    .notes
-                    .clone()
-                    .unwrap_or_else(|| format!("{} has no equivalent", key)),
-            })
-        } else {
-            None
-        };
-
-        let warning = if entry.warn == Some(true) {
-            Some(format!(
-                "{}: {}",
-                entry.id,
-                entry.notes.as_deref().unwrap_or("warn")
-            ))
-        } else {
-            None
-        };
-
-        // Dropped fields are already recorded via IRField.dropped — no additional
-        // Diagnostic push is needed.  For genuinely lossy (non-dropped) warn:true
-        // fields, emit a single Warn diagnostic so build_report routes them to the
-        // lossy list.  Pushing a diagnostic for dropped fields would cause
-        // build_report to count each dropped field multiple times.
-        if entry.warn == Some(true) && !matches!(loss, Loss::Dropped) {
-            node.diagnostics.push(Diagnostic {
-                level: DiagLevel::Warn,
-                id: Some(entry.id.clone()),
-                message: entry
-                    .notes
-                    .clone()
-                    .unwrap_or_else(|| format!("{} (warn)", entry.id)),
-            });
-        }
-
-        node.fields.insert(
-            entry.id.clone(),
-            IRField {
-                id: entry.id.clone(),
-                value: v,
-                loss,
-                transforms_applied: applied,
-                degrade: None,
-                warning,
-                dropped: dropped_info,
-            },
-        );
+        crate::handlers::lift_mapped_field(entry, key, value, dir, node);
     }
 
     /// Recursively converts the skills/ directory and appends the results to children.
