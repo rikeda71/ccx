@@ -9,7 +9,7 @@ paths:
 ## Formatting & quality
 
 - Pass `cargo fmt` (do not commit formatting violations)
-- Pass `cargo clippy -- -D warnings` (treat warnings as errors)
+- Pass `cargo clippy --all-targets -- -D warnings` (treat warnings as errors; matches CI)
 - Pass `cargo test`
 
 ## Error handling
@@ -38,6 +38,7 @@ paths:
 
 ## Test strategy (`docs/spec.md §18 Testing Strategy`)
 
-- `insta` snapshots: use `tests/fixtures/` as golden files
+- `insta` snapshots: input fixtures live in `tests/fixtures/`; golden snapshot files live in `tests/snapshots/` (review/update with `cargo insta review`)
+- Integration tests are domain-grouped: `tests/{cli,hooks,mcp,memory,plugins,settings,skills,subagents}.rs` share helpers from `tests/common/mod.rs`
 - Round-trip tests: `c2x → x2c` must produce exact matches for `lossless` entries; only known diffs are permitted for `lossy`/`dropped`
 - Mappings invariant tests: see `rules/mappings.md`

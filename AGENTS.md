@@ -26,10 +26,11 @@ tests/      Integration tests and fixtures
 ```sh
 cargo build
 cargo test
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo fmt
 cargo run -- check <path>
 cargo run -- c2x <path>
+cargo run -- x2c <path>
 uv run scripts/validate-mappings.py   # validate mappings invariants
 ```
 
@@ -39,7 +40,7 @@ Fine-grained rules are under `.claude/rules/` and are auto-loaded by context:
 
 | Area | Rule file |
 |---|---|
-| `src/**`, `tests/**` | `.claude/rules/rust.md` |
+| `src/**`, `tests/**` | `.claude/rules/rust.md`, `.claude/rules/code-style.md`, `.claude/rules/effective-rust.md` |
 | `mappings/**` | `.claude/rules/mappings.md` |
 | `docs/**` | `.claude/rules/docs.md` |
 

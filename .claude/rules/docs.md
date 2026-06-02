@@ -11,6 +11,7 @@ paths:
 
 - When changing the design, update **both** `docs/spec.md` and any related `mappings/*.yaml` to keep them in sync.
 - The feature alignment and loss matrix (convertible / not convertible / future follow-up classifications) is maintained in `docs/spec.md §16 Feature & Loss Matrix Summary` and must match the `loss` distribution in `mappings/*.yaml` (counts and breakdown of lossless / lossy / dropped).
+- `docs/conversion-coverage.md` is a user-facing summary derived from `docs/spec.md §16` and the YAML counts. When updating §16 or the `mappings/*.yaml` entry counts, update `docs/conversion-coverage.md` to match as well.
 - If `docs/spec.md` and another document conflict, `docs/spec.md` takes precedence.
 
 ## Reference rules

@@ -139,12 +139,12 @@ Input path(s)
     │
     ▼ lower(IR)        — domain handler emits EmitPlan (files + diagnostics)
     │                    opts: out dir, scope, dual_manifest, hooks_target, skill_target, interactive
+    │                    (serialization happens inside each handler's lower():
+    │                     toml_edit::DocumentMut for TOML, serde_json for JSON, serde-saphyr for YAML frontmatter)
     │
-    ▼ serialize        — toml_edit::DocumentMut (TOML), serde_json (JSON), serde-saphyr (YAML frontmatter)
+    ▼ build_report     — always produced; --report[=json] prints detail
     │
-    ▼ write_plan       — writes EmitFile list + SideArtifacts; overwrites blocked unless --force
-    │
-    ▼ report           — always produced; --report[=json] for detail / --dry-run skips write
+    ▼ write_plan       — writes EmitFile list + SideArtifacts; skipped on --dry-run; --force to overwrite
 ```
 
 Key design principles:
@@ -161,6 +161,7 @@ cxbridge/
 │   ├── SCHEMA.md
 │   └── *.yaml
 ├── src/
+│   ├── lib.rs          # crate root; re-exports cli/core/degrade/handlers/scanner
 │   ├── main.rs         # clap derive entry point
 │   ├── cli.rs          # CLI definition + dispatch
 │   ├── core/
@@ -171,11 +172,14 @@ cxbridge/
 │   │   ├── detect.rs
 │   │   └── serialize/  # json.rs, frontmatter.rs wrappers
 │   ├── handlers/
-│   │   ├── mod.rs      # Handler trait + LowerOpts
+│   │   ├── mod.rs      # Handler trait + LowerOpts + SkillTargetMode
 │   │   ├── skills.rs
 │   │   ├── hooks.rs
 │   │   ├── mcp.rs
-│   │   └── plugins.rs
+│   │   ├── plugins.rs
+│   │   ├── memory.rs
+│   │   ├── settings.rs
+│   │   └── subagents.rs
 │   ├── degrade/
 │   │   ├── rules.rs    # allowed-tools → .rules (execpolicy)
 │   │   ├── subagent.rs # skill(model/effort) → .codex/agents/*.toml
@@ -185,7 +189,16 @@ cxbridge/
 └── tests/
     ├── fixtures/
     ├── snapshots/      # insta golden snapshots
-    └── roundtrip.rs
+    ├── common/
+    │   └── mod.rs      # shared test helpers
+    ├── cli.rs
+    ├── hooks.rs
+    ├── mcp.rs
+    ├── memory.rs
+    ├── plugins.rs
+    ├── settings.rs
+    ├── skills.rs
+    └── subagents.rs
 ```
 
 ---
@@ -241,6 +254,7 @@ pub struct IRNode {
     pub children: Vec<IRNode>,            // for plugins (recursive)
     pub side_artifacts: Vec<SideArtifact>,// degrade-generated extra files
     pub diagnostics: Vec<Diagnostic>,
+    pub raw_frontmatter: Option<serde_json::Map<String, Value>>, // used for --keep-claude-frontmatter
 }
 
 #[derive(Debug, Clone)]
@@ -297,7 +311,10 @@ pub struct ConvertOpts {
 /// Distinct from `SkillTarget`, the resolved decision enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillTargetMode { Auto, Skill, Subagent }
+```
 
+```rust
+// degrade/subagent.rs
 /// The resolved skill conversion target after `decide_skill_target` runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillTarget { Skill, Subagent }
@@ -308,14 +325,14 @@ Key functions defined in the skeleton (`src/main.rs` / `handlers/skills.rs` / `c
 | Function | Module | Purpose |
 |---|---|---|
 | `pick_handler(kind, maps)` | `src/main.rs` | Dispatch `Kind` → `Box<dyn Handler>` |
-| `decide_skill_target(ir, opts)` | `handlers/skills.rs` | Resolve `SkillTargetMode` → `SkillTarget`; explicit → auto → gray-case |
-| `ask_user_skill_target(ir)` | `handlers/skills.rs` | TTY prompt (dialoguer) for gray-case interactive mode |
+| `decide_skill_target(ir, opts)` | `degrade/subagent.rs` | Resolve `SkillTargetMode` → `SkillTarget`; explicit → auto → gray-case |
+| `ask_user_skill_target(ir)` | `degrade/subagent.rs` | TTY prompt (dialoguer) for gray-case interactive mode |
 | `rewrite_body(raw, findings)` | `scanner/body.rs` | Apply `Action::Rewrite` findings; called only when `opts.rewrite_body == true` |
 | `build_report(ir, plan)` | `core/report.rs` | Aggregate IR diagnostics + EmitPlan into `Report` |
 | `upsert_agent_config(path, name, toml_path)` | `degrade/subagent.rs` | Non-destructive `toml_edit` merge for `[agents.*]` / `[features]` |
 | `to_field(entry, value, applied)` | `handlers/mod.rs` | Construct `IRField` from a `MapEntry` + transformed value |
 | `warn_for(entry)` | `handlers/mod.rs` | Construct `Diagnostic { level: Warn, ... }` for `warn: true` entries |
-| `new_node(kind, dir, path)` | `core/ir.rs` | Construct a default `IRNode` |
+| `new_node(kind, source_tool, source_path)` | `core/ir.rs` | Construct a default `IRNode` |
 
 ### `parse()` Contract Shape
 
@@ -372,18 +389,22 @@ notes: ["..."]
 | `transform` | `"unit:ms_to_sec; rename"` (`;`-separated) | Value transformation rules; see §8 |
 | `warn` | `true` / `false` | Whether to emit a user warning at conversion time |
 
-### The Six Invariants
+### The Invariants
 
-The CLI asserts these at startup (and in CI tests):
+`load_mappings()` asserts the following three invariants at startup via panics (failing at runtime if violated):
 
-1. **`loss: dropped` entries are always listed in the conversion report.** Silent discard is prohibited.
-2. **`warn: true` entries always emit a user-visible warning** at conversion time.
-3. **`degrade` entries always record the target scope** (`to` field) in the report.
-4. **`direction`-scoped entries are ignored in the reverse direction** (not silently applied).
-5. **`id` values are globally unique** across all `mappings/*.yaml` files.
-6. **`source` field must be present on every entry.** Entries missing `source` fail the invariant check.
+1. **`id` values are globally unique** across all `mappings/*.yaml` files.
+2. **`degrade` implies `loss: lossy`** — a `degrade` block may only appear on entries with `loss: lossy`.
+3. **`loss: dropped` entries must not carry a `transform`** — dropped fields have no output, so a transform would be meaningless.
 
-Additionally: `degrade` may only appear on `loss: lossy` entries, and `loss: dropped` entries must not carry a `transform`.
+The following are behavioral contracts enforced in handlers and tests (not startup panics):
+
+- **`loss: dropped` entries are always listed in the conversion report.** Silent discard is prohibited.
+- **`warn: true` entries always emit a user-visible warning** at conversion time.
+- **`degrade` entries always record the target scope** (`to` field) in the report.
+- **`direction`-scoped entries are ignored in the reverse direction** (not silently applied).
+
+Note: the `source` field appears in `mappings/*.yaml` as documentation metadata but is **not** deserialized into `MapEntry` and is **not** validated by `load_mappings()`.
 
 ---
 
@@ -417,6 +438,7 @@ pub struct TransformSpec {
 | `polarity:invert` | `!v` (bool flip; e.g. `disabled:true` ↔ `enabled:false`) |
 | `enum_map:{a:b,...}` | Map enum value; `args` injects the mapping dictionary |
 | `index_shift` | Direction-aware: c2x adds +1, x2c subtracts 1 (`$ARGUMENTS[0]` ↔ `$1`). **Exception: index 0 is never auto-rewritten** — `$ARGUMENTS[0]` → `$1` would conflict with `$0` (the bash script name). Index 0 is warn+propose only; auto-rewrite applies only to indices ≥ 1. |
+| `index_shift:+1` | Colon-arg alias for `index_shift`; used in `variables.yaml` to explicitly signal the +1 shift direction. |
 | `str_to_list:space` | Split on whitespace → array |
 | `list_to_str:space` | Join array with space |
 | `rename` | Key rename only; value passes through |
@@ -488,11 +510,16 @@ pub trait Handler {
 ### File Detection (`core/detect.rs`)
 
 **File input:** Pattern match on filename + first bytes:
-- `**/skills/*/SKILL.md` → `Kind::Skill`
+- `SKILL.md` (under a skills directory) → `Kind::Skill`
 - `.mcp.json` → `Kind::Mcp`
-- `plugin.json` under `.claude-plugin/` or `.codex-plugin/` → `Kind::Plugin`
 - `CLAUDE.md` / `AGENTS.md` → `Kind::Memory`
-- `config.toml` → parse and check for `[mcp_servers]` / `[hooks]` tables
+- `hooks.json` → `Kind::Hooks`
+- `settings.json` → parse: if it has a `hooks` key → `Kind::Hooks`; otherwise → `Kind::Settings`
+- `config.toml` → parse: both `[mcp_servers]` + `[hooks]` present → `Kind::Plugin`; `[mcp_servers]` only → `Kind::Mcp`; `[hooks]` only → `Kind::Hooks`; neither → `Kind::Settings`
+- `*plugin.json` (filename ends with `plugin.json`) → `Kind::Plugin`
+- `openai.yaml` → `Kind::Skill`
+- Non-config `*.toml` files → `Kind::Subagent`
+- Agent-style `*.md` files (not SKILL.md / CLAUDE.md / AGENTS.md) → `Kind::Subagent`
 
 **Directory input:** Walk with glob patterns for all of the above.
 
@@ -577,7 +604,7 @@ Priority: explicit `--skill-target` > deterministic auto-detection > gray-case (
 
 **Dropped output fields (x2c):** `updatedMCPToolOutput` (Codex PostToolUse only), `model`, `turn_id`, `tool_use_id` (Codex-only stdin fields).
 
-**Plugin-bundled hooks (c2x — issue #16430, effectively fixed in source):** Codex now discovers and loads `hooks/hooks.json` from installed plugin roots (`append_plugin_hook_sources()` in `discovery.rs`; `PluginHooks` feature flag removed in PR #22552, merged 2026-05-21). Plugin-bundled hooks are therefore loaded by Codex, subject to its hook trust prompt. The `--hooks-target=user|project` flag is no longer required solely to make plugin hooks work — it remains available as an optional write-destination preference. The CLI emits an informational note (not a hard warning) referencing #16430.
+**Plugin-bundled hooks (c2x — issue #16430):** Codex may not load `hooks/hooks.json` from installed plugin roots. The CLI emits a `DiagLevel::Warn` diagnostic with the exact message: `"Plugin-bundled hooks may not be loaded by Codex (#16430). Use --hooks-target=user|project to output hooks to ~/.codex/hooks.json or .codex/config.toml instead."` Using `--hooks-target=user|project` is the recommended workaround to ensure hooks are picked up.
 
 **Codex-specific stdin fields (x2c handling):** Codex adds extra stdin fields not present in Claude. The x2c handler must drop these when converting Codex hook configurations toward Claude:
 - `SessionStart` input: `source` field (`startup|resume|clear|compact`) — Codex-only, dropped on x2c
@@ -633,7 +660,7 @@ The Plugins handler is the integration point. It coordinates skills/hooks/mcp ha
 5. `marketplace.json`: near-identical schema; `source` type normalization required (Claude `relative` → Codex `{source:"local",...}`); Claude `github` source → approximate with `git-subdir` or `url` (Codex has no `github` shorthand source type); `npm`-type sources dropped. Missing `policy` entries get default values (`installation=AVAILABLE`, `authentication=ON_INSTALL`) with report annotation. Additional dropped fields (c2x): `marketplace.owner`, `allowCrossMarketplaceDependenciesOn`, `forceRemoveDeletedPlugins`. `marketplace.plugins[].policy` is Codex-only and dropped on x2c.
 6. **Dual manifest strategy (`--dual-manifest`):** Retain `.claude-plugin/` and generate `.codex-plugin/plugin.json` alongside. This is the only way to get native Codex recognition.
 
-**Hook #16430 (effectively fixed in source) applies here too.** Plugin-bundled hooks ARE now discovered and loaded by Codex (PR #22552, merged 2026-05-21). The `--hooks-target` flag is an optional write-destination preference, not a required workaround.
+**Hook #16430 applies here too.** Plugin-bundled hooks may not be loaded by Codex. Use `--hooks-target=user|project` as the recommended workaround (see §9.2 and §17).
 
 **x2c dropped/lossy — Codex-specific `interface.*` fields:** When converting Codex → Claude, the following Codex `interface.*` fields have no direct Claude plugin receptacle and are handled as follows:
 - `interface.brandColor`, `interface.composerIcon`, `interface.logo`, `interface.capabilities`, `interface.screenshots`, `interface.privacyPolicyURL`, `interface.termsOfServiceURL` → **dropped** (x2c)
@@ -691,7 +718,7 @@ Full automatic conversion is not attempted. Only a subset is converted.
 - `permissions.allow(Bash(...))` → `.codex/rules/<n>.rules` (prefix_rule allow)
 - `permissions.deny(Bash(...))` → `.codex/rules/<n>.rules` (prefix_rule forbidden)
 - `permissions.allow(Read/Write)` → `[permissions.<n>].filesystem` (tool-axis → resource-axis; Read/Write boundary lost)
-- `permissions.allow/deny(WebFetch)` → `[permissions.<n>].network.domains`
+- `permissions.allow/deny(WebFetch)` → `[permissions.<n>].network = true|false` (boolean)
 
 **Dropped (c2x):** viewMode, worktree, autoUpdatesChannel, spinnerTips, voice/voiceEnabled, maxSkillDescriptionChars, defaultMode:plan.  
 **Dropped (x2c):** profiles, permissions.extends, approval_policy.granular.*, agents.max_threads/max_depth, tui.keymap.*, model_verbosity, web_search, features.child_agents_md, project_doc_fallback_filenames, developer_instructions (→ CLAUDE.md approximation only).
@@ -716,7 +743,8 @@ allowed-tools: ["Bash(git add *)", "Write(**/*.py)"]
 | `Bash(<cmd> <args>)` | `.codex/rules/<skill>.rules` — Starlark `prefix_rule(pattern=[...], decision="allow", justification="from skill <name>")` |
 | `Write(<glob>)` / `Edit(<glob>)` | `[permissions.<skill>].filesystem.<glob> = "write"` |
 | `Read(<glob>)` | `[permissions.<skill>].filesystem.<glob> = "read"` |
-| `WebFetch` / `WebSearch` | `[permissions.<skill>].network` domains, or `features.web_search` |
+| `WebFetch` | `[permissions.<skill>].network = true\|false` (boolean) |
+| `WebSearch` | `[features].web_search = true\|false` (boolean) |
 | `mcp__<server>__<tool>` | `[mcp_servers.<server>].enabled_tools` / `disabled_tools` |
 | Built-in tools (e.g. `AskUserQuestion`) | **Dropped** — no equivalent |
 
@@ -757,11 +785,11 @@ config_file = ".codex/agents/<skill>.toml"
 multi_agent = true
 ```
 
-**Diagnostic:** "Converted to subagent. Auto-fork behavior is lost; explicit `spawn_agent` invocation is required."
+**Diagnostic:** Emits a note: `skill '<name>' degraded to subagent`. The degrade writes `.codex/agents/<name>.toml` and sets `[features].multi_agent = true` in `config.toml`. The Claude auto-fork behavior is replaced by an explicit `spawn_agent` call — callers must invoke the subagent explicitly.
 
 ### 10.3 Skill-scoped hooks → session/project hooks
 
-Skill frontmatter `hooks` are moved to `[[hooks.<Event>]]` in `config.toml` or `hooks.json`.
+Skill frontmatter `hooks` are moved to `[[hooks.<Event>]]` in `.codex/config.toml` (project scope, `--hooks-target=project`) or `~/.codex/hooks.json` (user scope, `--hooks-target=user`).
 
 **Diagnostic:** "Skill-scoped hooks degraded to session/project scope. They will fire for all sessions, not only when this skill runs."
 
@@ -801,7 +829,7 @@ pub enum BodyContext {
 | Pattern (regex sketch) | Context | Kind | Action | Notes |
 |---|---|---|---|---|
 | `\$ARGUMENTS\[(\d+)\]` | any | ArgIndexed | **Rewrite** (index+1) | `$ARGUMENTS[0]` → `$1`. Exception: `[0]` is warn+propose only (conflicts with `$0` = shell script name). |
-| `\$(\d+)` (positional) | any | ArgIndexed | **Rewrite** (index+1) | Same index-shift rule |
+| `\$([1-9][0-9]*)` (positional, x2c only) | any | ArgIndexed | **Rewrite** (index−1) | x2c direction: `$1` → `$ARGUMENTS[0]` etc. (index shift −1). |
 | `\$ARGUMENTS(?!\[)` (bare, c2x only) | any | ArgIndexed | **Warn** | Bare `$ARGUMENTS` without `[N]` — Codex supports this only in Custom Prompts, not in Skill bodies. Do not rewrite. |
 | `\$\$` (x2c only) | any | — | Rewrite → `$` | Codex Custom Prompts escape |
 | `\$([a-z][a-z0-9_]*)` | any | ArgNamed | Warn | Invocation syntax changes to `KEY=value` in Codex |
@@ -854,7 +882,7 @@ $ cxbridge c2x ./skills/deploy --report
   ✕ paths                                      dropped
   ⚠ body L42: !`git diff` not executed in Codex (literal residue risk, requires manual fix)
   + generated: .codex/rules/deploy.rules, .codex/agents/deploy.toml, config.toml (appended)
-Summary: 2 lossless, 3 lossy (2 degraded), 2 dropped, 1 body-warning
+Summary: 2 lossless, 3 lossy(2 degraded), 2 dropped, 1 body-warning
 ```
 
 | Symbol | Meaning |
@@ -878,6 +906,7 @@ Summary: 2 lossless, 3 lossy (2 degraded), 2 dropped, 1 body-warning
 cxbridge c2x <path> [options]    # Claude → Codex (one-way)
 cxbridge x2c <path> [options]    # Codex → Claude (one-way)
 cxbridge check <path>            # Pre-conversion diagnosis (dropped count estimate, no writes)
+cxbridge --version               # Print version and exit
 ```
 
 `<path>` accepts a file or directory (recursive detection).
@@ -886,14 +915,14 @@ cxbridge check <path>            # Pre-conversion diagnosis (dropped count estim
 
 | Flag | Default | Description |
 |---|---|---|
-| `--out <dir>` | `<input>.converted/` | Output root directory |
+| `--out <dir>` | See Output Directory Structure (three distinct defaults by input type) | Output root directory |
 | `--only <domains>` | all | Comma-separated domain filter (e.g. `skills,mcp`) |
 | `--scope <project\|user>` | `project` | Degrade target scope (`.rules` / agents placement) |
 | `--skill-target <auto\|skill\|subagent>` | `auto` | Force skill conversion target |
 | `--interactive` | false | TTY confirmation for gray-case skills |
 | `--rewrite-body` | false | Apply body substitutions (default: detect-only) |
 | `--dual-manifest` | false | Keep `.claude-plugin/` and generate `.codex-plugin/` alongside |
-| `--hooks-target <user\|project>` | `user` | Hooks write destination (optional; #16430 effectively fixed in source — no longer a required workaround) |
+| `--hooks-target <user\|project>` | `user` | Hooks write destination; `user` → `~/.codex/hooks.json`, `project` → `.codex/config.toml`; recommended workaround for #16430 |
 | `--report[=json]` | none | Emit detailed report (`=json` for machine-readable) |
 | `--dry-run` | false | Report only, no file writes |
 | `--strict` | false | Exit 2 if any dropped entries exist (CI use) |
@@ -904,8 +933,8 @@ cxbridge check <path>            # Pre-conversion diagnosis (dropped count estim
 
 | Input type | Default output |
 |---|---|
-| Single skill directory | `<input>.converted/` |
-| `.mcp.json` file | `./<filename>.converted.json` |
+| Single skill directory | `<skill_dir>.converted/` |
+| `.mcp.json` file | `<parent>/<stem>.converted/` (e.g. `.mcp.json` → `.mcp.converted/`), a directory |
 | Project root | `./.codex-converted/` |
 
 Generated files within the output root:
@@ -945,7 +974,7 @@ All `SideArtifact.path` and `EmitFile.path` are stored as root-relative; `write_
 - Unknown fields → **drop + diagnostic**, processing continues. This mirrors Codex's own fail-open loader philosophy.
 - Untranslatable fields → always emit diagnostic, never silently discard.
 - **Existing file overwrite is blocked by default.** Use `--force` to allow overwrite. `.rules` and `config.toml` are append/merge only (never overwrite).
-- Existing keys in `config.toml` are not overwritten. If `[features].multi_agent` already exists as `false`, the CLI skips writing `true` and emits a warning.
+- Existing non-table keys in `config.toml` are not overwritten — they are kept silently. If `[features].multi_agent` already exists, the CLI keeps the existing value without warning (see §15 for the full merge algorithm).
 
 ---
 
@@ -953,16 +982,18 @@ All `SideArtifact.path` and `EmitFile.path` are stored as root-relative; `write_
 
 All writes to `config.toml` use `toml_edit::DocumentMut`. No string-patching (sed-style replacement) is used.
 
-**Algorithm:**
+**Algorithm (`merge_config_toml` in `src/cli.rs`):**
 
 1. Read existing `config.toml` as `DocumentMut` (or start with empty `DocumentMut` if file absent).
-2. Use `doc.entry(key).or_insert(...)` and table `.entry(key).or_insert(...)` to add `[agents.*]`, `[features]`, `[[hooks.*]]` entries.
-3. Existing keys: check whether the key already exists (e.g. via `.get(key).is_some()`); if it does, **skip write + emit a warning**.
-4. Write back with `doc.to_string()` (preserves comments and key order).
+2. For each key in the patch document:
+   - If the key is absent in the base: insert it.
+   - If both sides have a table for the key: recurse into that table and apply the same logic.
+   - If the key already exists in the base as a non-table value: **keep the existing value silently** (no warning emitted).
+3. Write back with `doc.to_string()` (preserves comments and key order).
 
-**array-of-tables appending:** `ArrayOfTables::push()` following the pattern from `codex-rs/mcp_edit.rs`.
+**Array-of-tables:** `[[array-of-tables]]` sections are **not** specially handled — there is no `ArrayOfTables::push`. Do not rely on this function to append `[[hooks.*]]` array entries.
 
-**Caveat:** Scattered `[[array-of-tables]]` sections in the source file may be reordered to contiguous positions when `toml_edit` parses them (comments and values are preserved). A warning is emitted when this occurs.
+**Caveat:** Scattered `[[array-of-tables]]` sections in the source file may be reordered to contiguous positions when `toml_edit` parses them (comments and values are preserved).
 
 ---
 
@@ -1026,7 +1057,7 @@ The CLI mirrors this philosophy: unknown fields produce drop diagnostics but pro
 
 | Issue | Description | CLI Behavior |
 |---|---|---|
-| **#16430** | Plugin-bundled `hooks.json` not loaded — **effectively fixed in source** (PR #22552, merged 2026-05-21): `append_plugin_hook_sources()` now auto-detects `hooks/hooks.json`; `PluginHooks` feature flag removed. Issue still open in tracker but code is shipped. | Emit informational note (not hard warn); `--hooks-target` is optional, not a required workaround |
+| **#16430** | Plugin-bundled `hooks.json` may not be loaded by Codex. | Emit `DiagLevel::Warn`: `"Plugin-bundled hooks may not be loaded by Codex (#16430). Use --hooks-target=user\|project to output hooks to ~/.codex/hooks.json or .codex/config.toml instead."` `--hooks-target` is the recommended workaround. |
 | **#14161** | `[[skills.config]]` per-skill override: `enabled` and `path` fields inside `SkillConfig` were silently ignored at runtime — **fixed 2026-03 (PR #14806)**. Per-skill config overrides are now stable. | No longer needs a degradation warning for this bug specifically; existing diagnostics for scope expansion remain |
 | **#21753** | Hook event parity tracker (still open) — `SubagentStart`/`SubagentStop` are listed as "Missing" in the tracker matrix, but **both ARE implemented** in the current Codex source (`HookEventName` enum). Source is authoritative; tracker is stale for these two events. Other Claude-only events remain unimplemented. | Treat `SubagentStart`/`SubagentStop` as common events (both/lossless). Mark remaining 20 Claude-only events as `⏳ awaiting-codex`; drop + warn. |
 | **#5019** | Dynamic injection `` !`cmd` `` — "not planned" | Body scanner detects + warns; no auto-removal (too destructive); user must manually handle |
@@ -1049,7 +1080,7 @@ Claude uses description semantic matching for automatic subagent dispatch. Codex
 
 ## 18. Testing Strategy
 
-1. **Mappings invariant tests** (at startup + CI): assert globally unique `id`, valid `direction`/`loss` values, `degrade` implies `loss:lossy`, `loss:dropped` has no `transform`, `source` field present. 304 entries; 0 issues confirmed.
+1. **Mappings invariant tests** (at startup + CI): assert globally unique `id`, `degrade` implies `loss:lossy`, `loss:dropped` has no `transform`. 304 entries; 0 issues confirmed. (Note: `source` field is not validated — it is documentation metadata only.)
 
 2. **Unit tests:**
    - Each transform function (`unit:ms_to_sec`, `polarity:invert`, `enum_map`, `index_shift`, etc.)
@@ -1058,7 +1089,7 @@ Claude uses description semantic matching for automatic subagent dispatch. Codex
 
 3. **Golden / snapshot tests** (`insta`): Fixed input fixtures → snapshot comparison. `cargo insta review` for snapshot updates. Location: `tests/fixtures/` (claude/ and codex/ inputs), `tests/snapshots/`.
 
-4. **Roundtrip tests** (`tests/roundtrip.rs`): `c2x → x2c` IR diff must contain only known `lossy`/`dropped` differences. `lossless` entries must produce identical values.
+4. **Roundtrip tests** (domain-grouped test files: `tests/cli.rs`, `tests/hooks.rs`, `tests/mcp.rs`, `tests/memory.rs`, `tests/plugins.rs`, `tests/settings.rs`, `tests/skills.rs`, `tests/subagents.rs`; shared helpers in `tests/common/mod.rs`): `c2x → x2c` IR diff must contain only known `lossy`/`dropped` differences. `lossless` entries must produce identical values.
 
    > **Degrade roundtrip special case (§18, item 4):** Degrade paths (e.g. session hooks → skill hooks) are structurally non-invertible. For degraded fields, test that `side_artifacts` are regenerated identically rather than requiring IR field equality.
 
@@ -1066,7 +1097,7 @@ Claude uses description semantic matching for automatic subagent dispatch. Codex
    - `codex_tier(tier_to_codex(t)) == Some(t)` for all `Tier` variants.
    - `claude_tier(tier_to_claude(t)) == Some(t)` for all `Tier` variants.
 
-6. **Property tests** (optional, `proptest`): Exhaustive verification of mappings invariants and roundtrip invariants.
+6. **Property tests** (not yet implemented — `proptest` is not a dependency): Exhaustive verification of mappings invariants and roundtrip invariants is planned but not currently in the test suite.
 
 ---
 
@@ -1104,28 +1135,31 @@ Zed ──────────┘
 
 ## 20. Technology Stack
 
-**Language:** Rust. Rationale: `toml_edit` provides non-destructive TOML merge (the only language/library combination that satisfies this requirement), Codex-rs crate types are reusable, single binary distribution is straightforward.
+**Language:** Rust. Rationale: `toml_edit` provides non-destructive TOML merge (the only language/library combination that satisfies this requirement), single binary distribution is straightforward.
 
 | Crate | Purpose |
 |---|---|
-| `toml_edit` | config.toml read/write with comment+order preservation; `DocumentMut` API |
-| `toml` (serde 0.9) | Typed TOML deserialization (used alongside `toml_edit`) |
-| `serde-saphyr` | YAML read/write with key-order preservation (0.0.x — API unstable) |
-| `gray_matter` | Splits YAML frontmatter from Markdown body |
+| `toml_edit` (0.25) | config.toml read/write with comment+order preservation; `DocumentMut` API |
+| `toml` (v1.1) | Typed TOML deserialization via `toml::from_str` (used alongside `toml_edit`) |
+| `serde-saphyr` (0.0.27) | YAML read/write with key-order preservation (0.0.x — API unstable) |
+| `gray_matter` (0.3) | Splits YAML frontmatter from Markdown body; `Matter::parse` returns `Result<ParsedEntity, Error>` |
 | `serde_json` | JSON serialization; generic `Value` for IR |
-| `clap` (derive) | CLI subcommands and flags |
-| `regex` + `once_cell` | Body scanner regex patterns (statically initialized) |
-| `anyhow` | `anyhow::Result`, `bail!`, `Context` for unified error handling |
-| `dialoguer` | TTY interactive prompts for `--interactive` skill-target confirmation |
-| `insta` | Golden/snapshot test comparison |
-| `proptest` | Property-based roundtrip invariant testing (optional) |
+| `serde` (1) | Derive macros for serialization |
+| `clap` (4, derive) | CLI subcommands and flags |
+| `regex` (1) + `once_cell` (1) | Body scanner regex patterns (statically initialized) |
+| `anyhow` (1) | `anyhow::Result`, `bail!`, `Context` for unified error handling |
+| `dialoguer` (0.12) | TTY interactive prompts for `--interactive` skill-target confirmation |
+| `walkdir` (2) | Recursive directory traversal for directory-input mode |
+| `shlex` (2) | Shell-quoting for args synthesis (exec-form `args` → shell-form `command`) |
+| `insta` (1, dev) | Golden/snapshot test comparison |
+| `tempfile` (3.27, dev) | Temp directories in integration tests |
 
-**Codex-rs reuse:** `codex-config` crate types (`ConfigToml`, `AgentsToml`, `HooksToml`, etc.), `merge.rs` `merge_toml_values`, `codex-utils-json-to-toml`. If `codex-rs` is not published to crates.io, copy the type definitions manually or generate them from `config.schema.json` via `typify`.
+**Codex-rs:** Not used. cxbridge defines its own TOML types locally; there is no `codex-rs`/`codex-config` crate dependency. `toml_edit::DocumentMut` handles all non-destructive `config.toml` writes.
 
-**Distribution:** `cargo dist` for macOS (x86_64/aarch64), Linux (`x86_64-unknown-linux-musl`, libc-independent), Windows. LTO + `strip` for ~5–15 MB binary size. Homebrew tap for `brew install`.
+**Distribution:** A custom version-driven GitHub Actions workflow (`.github/workflows/release.yml`) triggered by a `version` bump to `Cargo.toml` on `main`. Builds 5 targets: macOS aarch64 + x86_64, Linux gnu + musl, Windows msvc. Publishes to GitHub Releases; optionally pushes to crates.io (requires `CARGO_REGISTRY_TOKEN`); dispatches a Homebrew tap update (`rikeda71/homebrew-tap`, `cxbridge.rb`). `cargo dist` is **not** used.
 
 **Known weaknesses:**
-- `serde-saphyr` 0.0.x API instability — YAML write behavior may change.
+- `serde-saphyr` 0.0.27 — API is in the 0.0.x range and may have breaking changes in future releases.
 - `toml_edit` reorders scattered `[[array-of-tables]]` to contiguous positions at parse time (values/comments preserved; emit a warning when this occurs).
 - First-build compile time is long with many dependency crates (mitigated by `sccache`).
 
